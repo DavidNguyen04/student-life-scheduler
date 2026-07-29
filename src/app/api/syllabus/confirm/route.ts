@@ -2,13 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { nextCourseColor } from "@/lib/utils";
+import {
+  ASSIGNMENT_BLOCK_MS,
+  ensureDailyTemplates,
+  findFirstAvailableSlot,
+  getFixedBusyBlocksForUser,
+  scheduleAllAssignments,
+} from "@/lib/schedule/assignment-scheduling";
+import { mergeBusyBlocks } from "@/lib/schedule/blocks";
 import { z } from "zod";
 
 const confirmSchema = z.object({
   courseName: z.string().min(1),
   term: z.string().optional().nullable(),
   color: z.string().optional(),
-  sourceType: z.enum(["pdf", "html", "text"]),
+  sourceType: z.enum(["pdf", "docx", "html", "text"]),
   rawContent: z.string().min(1),
   fileName: z.string().optional().nullable(),
   assignments: z.array(
@@ -61,6 +69,20 @@ export async function POST(req: NextRequest) {
     });
 
     const acceptedAssignments = body.assignments.filter((a) => a.accepted);
+    const now = new Date();
+    await ensureDailyTemplates(userId);
+
+    const latestDue = acceptedAssignments.reduce((latest, assignment) => {
+      if (!assignment.dueDate) return latest;
+      const due = new Date(assignment.dueDate);
+      return due > latest ? due : latest;
+    }, now);
+
+    let busyBlocks =
+      latestDue > now
+        ? await getFixedBusyBlocksForUser(userId, now, latestDue)
+        : [];
+
     for (const assignment of acceptedAssignments) {
       const created = await prisma.assignment.create({
         data: {
@@ -74,18 +96,28 @@ export async function POST(req: NextRequest) {
 
       if (assignment.dueDate) {
         const due = new Date(assignment.dueDate);
-        const start = new Date(due.getTime() - 2 * 60 * 60 * 1000);
-        await prisma.scheduleEvent.create({
-          data: {
-            userId,
-            courseId: course.id,
-            assignmentId: created.id,
-            title: assignment.title,
-            type: "coursework",
-            startTime: start,
-            endTime: due,
-          },
-        });
+        if (due > now) {
+          const slot = findFirstAvailableSlot(
+            busyBlocks,
+            now,
+            due,
+            ASSIGNMENT_BLOCK_MS,
+          );
+          if (slot) {
+            await prisma.scheduleEvent.create({
+              data: {
+                userId,
+                courseId: course.id,
+                assignmentId: created.id,
+                title: assignment.title,
+                type: "coursework",
+                startTime: slot.start,
+                endTime: slot.end,
+              },
+            });
+            busyBlocks = mergeBusyBlocks([...busyBlocks, slot]);
+          }
+        }
       }
     }
 

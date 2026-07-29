@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import { addDays } from "date-fns";
+import {
+  buildAllTemplateEvents,
+  DEFAULT_DAILY_TEMPLATES,
+} from "@/lib/schedule/templates";
+import { scheduleAllAssignments } from "@/lib/schedule/assignment-scheduling";
 
 const createSchema = z.object({
   title: z.string().min(1),
@@ -27,8 +31,13 @@ export async function GET(req: NextRequest) {
       userId: session.user.id,
       ...(start && end
         ? {
-            startTime: { lte: new Date(end) },
-            endTime: { gte: new Date(start) },
+            OR: [
+              { recurrenceRule: { not: null } },
+              {
+                startTime: { lte: new Date(end) },
+                endTime: { gte: new Date(start) },
+              },
+            ],
           }
         : {}),
     },
@@ -118,52 +127,30 @@ export async function PATCH(req: NextRequest) {
 
   const action = req.nextUrl.searchParams.get("action");
   if (action === "apply-templates") {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const userId = session.user.id;
+    const templateEvents = buildAllTemplateEvents(DEFAULT_DAILY_TEMPLATES);
 
-    const templates = [
-      {
-        title: "Sleep",
-        type: "sleep" as const,
-        startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 0),
-        endTime: addDays(new Date(today.getFullYear(), today.getMonth(), today.getDate(), 7, 0), 1),
-        recurrenceRule: "FREQ=DAILY",
-      },
-      {
-        title: "Breakfast",
-        type: "meal" as const,
-        startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 8, 0),
-        endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 8, 30),
-        recurrenceRule: "FREQ=DAILY",
-      },
-      {
-        title: "Lunch",
-        type: "meal" as const,
-        startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 30),
-        endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 13, 0),
-        recurrenceRule: "FREQ=DAILY",
-      },
-      {
-        title: "Dinner",
-        type: "meal" as const,
-        startTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 18, 30),
-        endTime: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 19, 0),
-        recurrenceRule: "FREQ=DAILY",
-      },
-    ];
-
-    for (const t of templates) {
+    for (const template of templateEvents) {
       const exists = await prisma.scheduleEvent.findFirst({
-        where: { userId: session.user.id, title: t.title, recurrenceRule: t.recurrenceRule },
+        where: {
+          userId,
+          title: template.title,
+          recurrenceRule: { not: null },
+        },
       });
       if (!exists) {
         await prisma.scheduleEvent.create({
-          data: { userId: session.user.id, ...t },
+          data: { userId, ...template },
         });
       }
     }
 
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "schedule-assignments") {
+    const scheduled = await scheduleAllAssignments(session.user.id);
+    return NextResponse.json({ ok: true, scheduled });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

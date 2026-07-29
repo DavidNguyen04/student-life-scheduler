@@ -11,9 +11,11 @@ type ParsedPayload = SyllabusParseResult & {
   fileName?: string;
 };
 
+type UploadMode = "text" | "html" | "file";
+
 export default function AddSyllabusPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"pdf" | "html" | "text">("text");
+  const [mode, setMode] = useState<UploadMode>("text");
   const [content, setContent] = useState("");
   const [parsed, setParsed] = useState<ParsedPayload | null>(null);
   const [rawContent, setRawContent] = useState("");
@@ -26,10 +28,10 @@ export default function AddSyllabusPage() {
     setError("");
 
     try {
-      if (mode === "pdf") {
-        const input = document.getElementById("pdf-file") as HTMLInputElement;
+      if (mode === "file") {
+        const input = document.getElementById("syllabus-file") as HTMLInputElement;
         const file = input?.files?.[0];
-        if (!file) throw new Error("Select a PDF file");
+        if (!file) throw new Error("Select a PDF or DOCX file");
 
         const formData = new FormData();
         formData.append("file", file);
@@ -84,24 +86,35 @@ export default function AddSyllabusPage() {
         {!parsed ? (
           <form onSubmit={handleParse} className="mt-6 space-y-4">
             <div className="flex gap-2">
-              {(["text", "html", "pdf"] as const).map((m) => (
+              {(
+                [
+                  { id: "text", label: "TEXT" },
+                  { id: "html", label: "HTML" },
+                  { id: "file", label: "PDF / DOCX" },
+                ] as const
+              ).map((option) => (
                 <button
-                  key={m}
+                  key={option.id}
                   type="button"
-                  onClick={() => setMode(m)}
+                  onClick={() => setMode(option.id)}
                   className={`rounded-md px-3 py-1.5 text-sm ${
-                    mode === m
+                    mode === option.id
                       ? "bg-indigo-600 text-white"
                       : "bg-zinc-100 text-zinc-700"
                   }`}
                 >
-                  {m.toUpperCase()}
+                  {option.label}
                 </button>
               ))}
             </div>
 
-            {mode === "pdf" ? (
-              <input id="pdf-file" type="file" accept=".pdf" className="block w-full text-sm" />
+            {mode === "file" ? (
+              <input
+                id="syllabus-file"
+                type="file"
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="block w-full text-sm"
+              />
             ) : (
               <textarea
                 value={content}

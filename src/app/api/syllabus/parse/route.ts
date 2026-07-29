@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
-  extractTextFromPdf,
+  extractTextFromUpload,
   parseSyllabusText,
 } from "@/lib/syllabus/parser";
+
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -22,12 +24,21 @@ export async function POST(req: NextRequest) {
       }
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      const text = await extractTextFromPdf(buffer);
-      const parsed = parseSyllabusText(text, "pdf");
+      const { text, sourceType } = await extractTextFromUpload(buffer, file.name);
+      if (!text.trim()) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not extract text from file. Try pasting the syllabus as text instead.",
+          },
+          { status: 400 },
+        );
+      }
+      const parsed = parseSyllabusText(text, sourceType);
 
       return NextResponse.json({
         ...parsed,
-        sourceType: "pdf",
+        sourceType,
         fileName: file.name,
       });
     }

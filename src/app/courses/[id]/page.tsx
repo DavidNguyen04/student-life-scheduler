@@ -7,6 +7,14 @@ import { AppShell } from "@/components/app-shell";
 import { CourseChat } from "@/components/chat/course-chat";
 import { COURSE_COLORS, formatDate, formatDateTime } from "@/lib/utils";
 
+type CourseResource = {
+  id: string;
+  title: string;
+  sourceType: string;
+  fileName: string | null;
+  createdAt: string;
+};
+
 type Course = {
   id: string;
   name: string;
@@ -27,6 +35,7 @@ type Course = {
     location: string | null;
   }>;
   syllabus: { rawContent: string; sourceType: string } | null;
+  resources: CourseResource[];
 };
 
 export default function CourseDetailPage() {
@@ -40,6 +49,12 @@ export default function CourseDetailPage() {
   const [newAssignment, setNewAssignment] = useState({ title: "", dueDate: "" });
   const [newExam, setNewExam] = useState({ title: "", dateTime: "", location: "" });
   const [syllabusText, setSyllabusText] = useState("");
+  const [resourceTitle, setResourceTitle] = useState("");
+  const [resourceText, setResourceText] = useState("");
+  const [resourceError, setResourceError] = useState("");
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [expandedResourceId, setExpandedResourceId] = useState<string | null>(null);
+  const [expandedContent, setExpandedContent] = useState("");
 
   const loadCourse = useCallback(async (id: string) => {
     const res = await fetch(`/api/courses/${id}`);
@@ -104,6 +119,94 @@ export default function CourseDetailPage() {
     });
     setSyllabusText("");
     loadCourse(courseId);
+  }
+
+  async function uploadResourceFile(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setResourceLoading(true);
+    setResourceError("");
+
+    try {
+      const form = e.currentTarget;
+      const fileInput = form.elements.namedItem("resource-file") as HTMLInputElement;
+      const file = fileInput?.files?.[0];
+      if (!file) throw new Error("Select a file");
+
+      const formData = new FormData();
+      formData.append("file", file);
+      if (resourceTitle.trim()) {
+        formData.append("title", resourceTitle.trim());
+      }
+
+      const res = await fetch(`/api/courses/${courseId}/resources`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setResourceTitle("");
+      form.reset();
+      loadCourse(courseId);
+    } catch (err) {
+      setResourceError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setResourceLoading(false);
+    }
+  }
+
+  async function uploadResourceText(e: React.FormEvent) {
+    e.preventDefault();
+    setResourceLoading(true);
+    setResourceError("");
+
+    try {
+      const res = await fetch(`/api/courses/${courseId}/resources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: resourceTitle.trim() || "Additional notes",
+          content: resourceText,
+          sourceType: "text",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setResourceTitle("");
+      setResourceText("");
+      loadCourse(courseId);
+    } catch (err) {
+      setResourceError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setResourceLoading(false);
+    }
+  }
+
+  async function deleteResource(resourceId: string) {
+    if (!confirm("Delete this file?")) return;
+    await fetch(`/api/courses/${courseId}/resources/${resourceId}`, {
+      method: "DELETE",
+    });
+    if (expandedResourceId === resourceId) {
+      setExpandedResourceId(null);
+      setExpandedContent("");
+    }
+    loadCourse(courseId);
+  }
+
+  async function viewResource(resourceId: string) {
+    if (expandedResourceId === resourceId) {
+      setExpandedResourceId(null);
+      setExpandedContent("");
+      return;
+    }
+
+    const res = await fetch(`/api/courses/${courseId}/resources/${resourceId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    setExpandedResourceId(resourceId);
+    setExpandedContent(data.content);
   }
 
   if (!course) {
@@ -237,6 +340,100 @@ export default function CourseDetailPage() {
           </form>
         </section>
       </div>
+
+      <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-4">
+        <h2 className="font-medium">Additional files</h2>
+        <p className="mt-1 text-sm text-zinc-500">
+          Upload schedules, readings, or other course documents (PDF, DOCX, HTML, TXT).
+        </p>
+
+        {course.resources.length > 0 && (
+          <ul className="mt-4 space-y-2">
+            {course.resources.map((resource) => (
+              <li
+                key={resource.id}
+                className="rounded border border-zinc-200 p-3 text-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{resource.title}</p>
+                    <p className="text-xs text-zinc-500">
+                      {resource.fileName ?? resource.sourceType.toUpperCase()} ·{" "}
+                      {formatDate(new Date(resource.createdAt))}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => viewResource(resource.id)}
+                      className="text-indigo-600 hover:underline"
+                    >
+                      {expandedResourceId === resource.id ? "Hide" : "View"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteResource(resource.id)}
+                      className="text-red-600 hover:underline"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                {expandedResourceId === resource.id && (
+                  <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-zinc-50 p-3 text-xs text-zinc-700">
+                    {expandedContent}
+                  </pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="mt-4 space-y-4">
+          <input
+            value={resourceTitle}
+            onChange={(e) => setResourceTitle(e.target.value)}
+            placeholder="Title (optional for file uploads)"
+            className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+          />
+
+          <form onSubmit={uploadResourceFile} className="space-y-2">
+            <input
+              id="resource-file"
+              name="resource-file"
+              type="file"
+              accept=".pdf,.docx,.html,.htm,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/html,text/plain"
+              className="block w-full text-sm"
+            />
+            <button
+              type="submit"
+              disabled={resourceLoading}
+              className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {resourceLoading ? "Uploading..." : "Upload file"}
+            </button>
+          </form>
+
+          <form onSubmit={uploadResourceText} className="space-y-2">
+            <textarea
+              value={resourceText}
+              onChange={(e) => setResourceText(e.target.value)}
+              rows={4}
+              placeholder="Or paste text content..."
+              className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={resourceLoading || !resourceText.trim()}
+              className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
+            >
+              Save text resource
+            </button>
+          </form>
+        </div>
+
+        {resourceError && <p className="mt-2 text-sm text-red-600">{resourceError}</p>}
+      </section>
 
       <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-4">
         <h2 className="font-medium">Re-upload syllabus</h2>

@@ -1,5 +1,5 @@
-import { RRule } from "rrule";
 import { addDays, startOfDay, endOfDay, isWithinInterval } from "date-fns";
+import { expandRecurringEvents as expandBlocks } from "@/lib/schedule/recurrence";
 
 export type TimeBlock = {
   start: Date;
@@ -15,33 +15,7 @@ export function expandRecurringEvents(
   rangeStart: Date,
   rangeEnd: Date,
 ): TimeBlock[] {
-  const blocks: TimeBlock[] = [];
-
-  for (const event of events) {
-    if (!event.recurrenceRule) {
-      if (event.endTime >= rangeStart && event.startTime <= rangeEnd) {
-        blocks.push({ start: event.startTime, end: event.endTime });
-      }
-      continue;
-    }
-
-    try {
-      const rule = RRule.fromString(event.recurrenceRule);
-      const duration = event.endTime.getTime() - event.startTime.getTime();
-      const occurrences = rule.between(rangeStart, rangeEnd, true);
-
-      for (const occurrence of occurrences) {
-        blocks.push({
-          start: occurrence,
-          end: new Date(occurrence.getTime() + duration),
-        });
-      }
-    } catch {
-      blocks.push({ start: event.startTime, end: event.endTime });
-    }
-  }
-
-  return blocks;
+  return expandBlocks(events, rangeStart, rangeEnd);
 }
 
 export function findFreeSlots(
@@ -85,7 +59,7 @@ export function isBlocked(
   );
 }
 
-export const STUDY_BLOCK_MS = 2 * 60 * 60 * 1000;
+export const STUDY_BLOCK_MS = 60 * 60 * 1000;
 
 export function suggestStudyBlocks(
   assignments: { id: string; title: string; dueDate: Date | null; courseId: string }[],

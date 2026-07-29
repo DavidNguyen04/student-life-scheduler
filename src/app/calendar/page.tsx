@@ -4,6 +4,18 @@ import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
 import { addDays, startOfWeek } from "date-fns";
+import {
+  defaultEventTimes,
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+} from "@/lib/schedule/datetime";
+import { buildRRule } from "@/lib/schedule/recurrence";
+import { splitBlockAtMidnight } from "@/lib/schedule/blocks";
+import {
+  applyDailyTimes,
+  formatTimeValue,
+  isTemplateTitle,
+} from "@/lib/schedule/templates";
 
 const EVENT_TYPES = [
   { value: "sleep", label: "Sleep" },
@@ -13,86 +25,288 @@ const EVENT_TYPES = [
   { value: "coursework", label: "Study block" },
 ];
 
+type ScheduleEventRow = {
+  id: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  type: string;
+  recurrenceRule: string | null;
+  course?: { color?: string; name?: string };
+};
+
+type EventForm = {
+  scheduleEventId: string | null;
+  title: string;
+  type: string;
+  startTime: string;
+  endTime: string;
+  startTimeOnly: string;
+  endTimeOnly: string;
+  recurring: boolean;
+};
+
+const EMPTY_FORM: EventForm = {
+  scheduleEventId: null,
+  title: "",
+  type: "workout",
+  startTime: "",
+  endTime: "",
+  startTimeOnly: "09:00",
+  endTimeOnly: "10:00",
+  recurring: false,
+};
+
+function pushCalendarBlock(
+  expanded: CalendarEvent[],
+  row: ScheduleEventRow,
+  resource: CalendarEvent["resource"],
+  start: Date,
+  end: Date,
+  idSuffix: string,
+) {
+  const segments = splitBlockAtMidnight(start, end);
+  segments.forEach((segment, segmentIndex) => {
+    if (segment.end <= segment.start) return;
+    expanded.push({
+      id: `${row.id}${idSuffix}-${segmentIndex}`,
+      title: row.title,
+      start: segment.start,
+      end: segment.end,
+      resource,
+    });
+  });
+}
+
+function expandEventsForRange(
+  rows: ScheduleEventRow[],
+  rangeStart: Date,
+  rangeEnd: Date,
+): CalendarEvent[] {
+  const expanded: CalendarEvent[] = [];
+
+  for (const row of rows) {
+    const startTime = new Date(row.startTime);
+    const endTime = new Date(row.endTime);
+    const duration = endTime.getTime() - startTime.getTime();
+    const resource = {
+      type: row.type,
+      color: row.course?.color,
+      courseName: row.course?.name,
+      scheduleEventId: row.id,
+      recurrenceRule: row.recurrenceRule,
+    };
+
+    if (!row.recurrenceRule) {
+      if (endTime >= rangeStart && startTime <= rangeEnd) {
+        pushCalendarBlock(expanded, row, resource, startTime, endTime, "");
+      }
+      continue;
+    }
+
+    try {
+      const rule = buildRRule(startTime, row.recurrenceRule);
+      const occurrences = rule.between(rangeStart, rangeEnd, true);
+      occurrences.forEach((occurrence, index) => {
+        pushCalendarBlock(
+          expanded,
+          row,
+          resource,
+          occurrence,
+          new Date(occurrence.getTime() + duration),
+          `-${index}`,
+        );
+      });
+    } catch {
+      if (endTime >= rangeStart && startTime <= rangeEnd) {
+        pushCalendarBlock(expanded, row, resource, startTime, endTime, "");
+      }
+    }
+  }
+
+  return expanded;
+}
+
+function formFromRow(row: ScheduleEventRow): EventForm {
+  const start = new Date(row.startTime);
+  const end = new Date(row.endTime);
+  return {
+    scheduleEventId: row.id,
+    title: row.title,
+    type: row.type,
+    startTime: toDatetimeLocalValue(start),
+    endTime: toDatetimeLocalValue(end),
+    startTimeOnly: formatTimeValue(start),
+    endTimeOnly: formatTimeValue(end),
+    recurring: Boolean(row.recurrenceRule),
+  };
+}
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [scheduleRows, setScheduleRows] = useState<ScheduleEventRow[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    title: "",
-    type: "workout",
-    startTime: "",
-    endTime: "",
-    recurring: false,
-  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState<EventForm>(EMPTY_FORM);
 
   const loadEvents = useCallback(async () => {
-    const start = startOfWeek(new Date());
+    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
     const end = addDays(start, 14);
     const res = await fetch(
       `/api/schedule?start=${start.toISOString()}&end=${end.toISOString()}`,
     );
-    const data = await res.json();
-    setEvents(
-      data.map(
-        (e: {
-          id: string;
-          title: string;
-          startTime: string;
-          endTime: string;
-          type: string;
-          course?: { color?: string; name?: string };
-        }) => ({
-          id: e.id,
-          title: e.title,
-          start: new Date(e.startTime),
-          end: new Date(e.endTime),
-          resource: {
-            type: e.type,
-            color: e.course?.color,
-            courseName: e.course?.name,
-          },
-        }),
-      ),
-    );
+    if (!res.ok) {
+      setError("Failed to load calendar events");
+      return;
+    }
+    const data = (await res.json()) as ScheduleEventRow[];
+    setScheduleRows(data);
+    setEvents(expandEventsForRange(data, start, end));
+    setError("");
   }, []);
 
   useEffect(() => {
-    loadEvents();
-    fetch("/api/schedule/suggestions", { method: "GET" }).then(() => loadEvents());
+    async function init() {
+      await fetch("/api/schedule?action=schedule-assignments", { method: "PATCH" });
+      await fetch("/api/schedule/suggestions", { method: "GET" });
+      await loadEvents();
+    }
+    init();
   }, [loadEvents]);
 
-  async function applyTemplates() {
-    await fetch("/api/schedule?action=apply-templates", { method: "PATCH" });
-    loadEvents();
-  }
-
-  async function createEvent(e: React.FormEvent) {
-    e.preventDefault();
-    await fetch("/api/schedule", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: form.title,
-        type: form.type,
-        startTime: form.startTime,
-        endTime: form.endTime,
-        recurrenceRule: form.recurring ? "FREQ=DAILY" : null,
-      }),
-    });
-    setShowForm(false);
-    setForm({ title: "", type: "workout", startTime: "", endTime: "", recurring: false });
-    loadEvents();
-  }
-
-  function handleSelectSlot(slot: { start: Date; end: Date }) {
-    setForm({
-      title: "",
-      type: "workout",
-      startTime: slot.start.toISOString().slice(0, 16),
-      endTime: slot.end.toISOString().slice(0, 16),
-      recurring: false,
-    });
+  function openNewEventForm(slot?: { start: Date; end: Date }) {
+    if (slot) {
+      setForm({
+        ...EMPTY_FORM,
+        startTime: toDatetimeLocalValue(slot.start),
+        endTime: toDatetimeLocalValue(slot.end),
+      });
+    } else {
+      const defaults = defaultEventTimes();
+      setForm({
+        ...EMPTY_FORM,
+        startTime: defaults.startTime,
+        endTime: defaults.endTime,
+      });
+    }
     setShowForm(true);
   }
+
+  function openEditEventForm(event: CalendarEvent) {
+    const scheduleEventId =
+      event.resource?.scheduleEventId ??
+      event.id.replace(/-\d+$/, "");
+    const row = scheduleRows.find((item) => item.id === scheduleEventId);
+    if (!row) {
+      setError("Could not load event for editing");
+      return;
+    }
+    setForm(formFromRow(row));
+    setShowForm(true);
+  }
+
+  async function applyTemplates() {
+    setError("");
+    const res = await fetch("/api/schedule?action=apply-templates", { method: "PATCH" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to apply templates");
+      return;
+    }
+    await loadEvents();
+  }
+
+  async function saveEvent(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+
+    let start: Date;
+    let end: Date;
+    let recurrenceRule: string | null = null;
+
+    if (form.recurring) {
+      const baseDate = form.scheduleEventId
+        ? new Date(
+            scheduleRows.find((row) => row.id === form.scheduleEventId)?.startTime ??
+              new Date(),
+          )
+        : new Date();
+      const applied = applyDailyTimes(baseDate, form.startTimeOnly, form.endTimeOnly);
+      start = applied.startTime;
+      end = applied.endTime;
+      recurrenceRule = applied.recurrenceRule;
+    } else {
+      start = fromDatetimeLocalValue(form.startTime);
+      end = fromDatetimeLocalValue(form.endTime);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        setError("Invalid start or end time");
+        setSaving(false);
+        return;
+      }
+      if (end <= start) {
+        setError("End time must be after start time");
+        setSaving(false);
+        return;
+      }
+    }
+
+    const payload = {
+      title: form.title,
+      type: form.type,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      recurrenceRule,
+    };
+
+    const res = form.scheduleEventId
+      ? await fetch("/api/schedule", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: form.scheduleEventId, ...payload }),
+        })
+      : await fetch("/api/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to save event");
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    await loadEvents();
+  }
+
+  async function deleteEvent() {
+    if (!form.scheduleEventId) return;
+    if (!confirm("Delete this scheduled block?")) return;
+
+    setSaving(true);
+    const res = await fetch(`/api/schedule?id=${form.scheduleEventId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      setError("Failed to delete event");
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    await loadEvents();
+  }
+
+  const isEditing = Boolean(form.scheduleEventId);
+  const isDailyBlock = form.recurring || isTemplateTitle(form.title);
 
   return (
     <AppShell>
@@ -100,24 +314,28 @@ export default function CalendarPage() {
         <div>
           <h1 className="text-2xl font-semibold">Calendar</h1>
           <p className="text-sm text-zinc-500">
-            Sleep, meals, workouts, time off, and coursework in one view
+            Click any block to edit. Sleep, meals, workouts, and coursework in one view.
           </p>
         </div>
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={applyTemplates}
             className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50"
           >
             Apply daily templates
           </button>
           <button
-            onClick={() => setShowForm(true)}
+            type="button"
+            onClick={() => openNewEventForm()}
             className="rounded-md bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700"
           >
             Add event
           </button>
         </div>
       </div>
+
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs">
         {Object.entries({
@@ -138,17 +356,18 @@ export default function CalendarPage() {
       <div className="mt-4">
         <WeekCalendar
           events={events}
-          onSelectSlot={handleSelectSlot}
+          onSelectSlot={(slot) => openNewEventForm(slot)}
+          onSelectEvent={openEditEventForm}
         />
       </div>
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <form
-            onSubmit={createEvent}
+            onSubmit={saveEvent}
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg"
           >
-            <h2 className="font-medium">New event</h2>
+            <h2 className="font-medium">{isEditing ? "Edit event" : "New event"}</h2>
             <div className="mt-4 space-y-3">
               <input
                 value={form.title}
@@ -168,43 +387,93 @@ export default function CalendarPage() {
                   </option>
                 ))}
               </select>
-              <input
-                type="datetime-local"
-                value={form.startTime}
-                onChange={(e) => setForm({ ...form, startTime: e.target.value })}
-                className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
-                required
-              />
-              <input
-                type="datetime-local"
-                value={form.endTime}
-                onChange={(e) => setForm({ ...form, endTime: e.target.value })}
-                className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
-                required
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={form.recurring}
-                  onChange={(e) => setForm({ ...form, recurring: e.target.checked })}
-                />
-                Repeat daily
-              </label>
+
+              {isDailyBlock ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    value={form.startTimeOnly}
+                    onChange={(e) => setForm({ ...form, startTimeOnly: e.target.value })}
+                    className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                    required
+                  />
+                  <span className="text-zinc-400">to</span>
+                  <input
+                    type="time"
+                    value={form.endTimeOnly}
+                    onChange={(e) => setForm({ ...form, endTimeOnly: e.target.value })}
+                    className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                    required
+                  />
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="datetime-local"
+                    value={form.startTime}
+                    onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                    className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                    required
+                  />
+                  <input
+                    type="datetime-local"
+                    value={form.endTime}
+                    onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+                    className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                    required
+                  />
+                </>
+              )}
+
+              {!isTemplateTitle(form.title) && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.recurring}
+                    onChange={(e) => setForm({ ...form, recurring: e.target.checked })}
+                  />
+                  Repeat daily
+                </label>
+              )}
+
+              {isDailyBlock && (
+                <p className="text-xs text-zinc-500">
+                  Daily blocks repeat every day. End time can be the next morning (e.g. sleep 23:00 → 07:00).
+                </p>
+              )}
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="rounded px-3 py-2 text-sm text-zinc-600"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="rounded bg-indigo-600 px-3 py-2 text-sm text-white"
-              >
-                Save
-              </button>
+            <div className="mt-4 flex justify-between gap-2">
+              {isEditing ? (
+                <button
+                  type="button"
+                  onClick={deleteEvent}
+                  disabled={saving}
+                  className="rounded px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForm(false);
+                    setForm(EMPTY_FORM);
+                  }}
+                  className="rounded px-3 py-2 text-sm text-zinc-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           </form>
         </div>

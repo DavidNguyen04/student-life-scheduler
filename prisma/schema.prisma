@@ -9,6 +9,7 @@ datasource db {
 
 enum SyllabusSourceType {
   pdf
+  docx
   html
   text
 }
@@ -213,15 +214,16 @@ model GradeSnapshot {
 }
 
 model CourseResource {
-  id        String          @id @default(cuid())
-  courseId  String
-  title     String
-  content   String          @db.Text
-  sourceType String         @default("upload")
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  course    Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  chunks    ResourceChunk[]
+  id         String          @id @default(cuid())
+  courseId   String
+  title      String
+  content    String          @db.Text
+  sourceType String          @default("upload")
+  fileName   String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  course     Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  chunks     ResourceChunk[]
 
   @@index([courseId])
 }
