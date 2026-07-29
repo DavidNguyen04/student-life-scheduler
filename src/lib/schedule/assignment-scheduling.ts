@@ -73,19 +73,17 @@ export async function getFixedBusyBlocksForUser(
     },
   });
 
-  // Expand from day before rangeStart so overnight sleep that began earlier is included.
-  const expandFrom = startOfDay(addDays(rangeStart, -1));
-  const expanded = expandRecurringEvents(
-    events.map((event) => ({
-      startTime: event.startTime,
-      endTime: event.endTime,
-      recurrenceRule: event.recurrenceRule,
-    })),
-    expandFrom,
-    rangeEnd,
+  return mergeBusyBlocks(
+    expandRecurringEvents(
+      events.map((event) => ({
+        startTime: event.startTime,
+        endTime: event.endTime,
+        recurrenceRule: event.recurrenceRule,
+      })),
+      rangeStart,
+      rangeEnd,
+    ),
   );
-
-  return mergeBusyBlocks(blocksInRange(expanded, rangeStart, rangeEnd));
 }
 
 /** Schedule assignments after sleep/meals, avoiding all fixed blocks. */
@@ -112,6 +110,11 @@ export async function scheduleAllAssignments(userId: string, now = new Date()) {
   );
 
   let busyBlocks = await getFixedBusyBlocksForUser(userId, now, rangeEnd);
+  const conflictBusyBlocks = await getFixedBusyBlocksForUser(
+    userId,
+    startOfDay(now),
+    rangeEnd,
+  );
   const scheduled: string[] = [];
 
   for (const assignment of assignments) {
@@ -124,7 +127,7 @@ export async function scheduleAllAssignments(userId: string, now = new Date()) {
       : null;
     const conflictsWithFixed =
       existingBlock !== null &&
-      busyBlocks.some((block) => overlaps(existingBlock, block));
+      conflictBusyBlocks.some((block) => overlaps(existingBlock, block));
 
     if (existing && existingBlock && !conflictsWithFixed) {
       busyBlocks = mergeBusyBlocks([...busyBlocks, existingBlock]);

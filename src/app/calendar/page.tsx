@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
-import { addDays, startOfWeek } from "date-fns";
+import { addDays, startOfDay, startOfWeek } from "date-fns";
+import { expandRecurringEvents } from "@/lib/schedule/recurrence";
+import { blocksInRange, splitBlockAtMidnight } from "@/lib/schedule/blocks";
 import {
   defaultEventTimes,
   fromDatetimeLocalValue,
   toDatetimeLocalValue,
 } from "@/lib/schedule/datetime";
-import { buildRRule } from "@/lib/schedule/recurrence";
-import { splitBlockAtMidnight } from "@/lib/schedule/blocks";
 import {
   applyDailyTimes,
   formatTimeValue,
@@ -64,10 +64,13 @@ function pushCalendarBlock(
   start: Date,
   end: Date,
   idSuffix: string,
+  rangeStart: Date,
+  rangeEnd: Date,
 ) {
   const segments = splitBlockAtMidnight(start, end);
   segments.forEach((segment, segmentIndex) => {
     if (segment.end <= segment.start) return;
+    if (!blocksInRange([segment], rangeStart, rangeEnd).length) return;
     expanded.push({
       id: `${row.id}${idSuffix}-${segmentIndex}`,
       title: row.title,
@@ -88,7 +91,6 @@ function expandEventsForRange(
   for (const row of rows) {
     const startTime = new Date(row.startTime);
     const endTime = new Date(row.endTime);
-    const duration = endTime.getTime() - startTime.getTime();
     const resource = {
       type: row.type,
       color: row.course?.color,
@@ -99,29 +101,44 @@ function expandEventsForRange(
 
     if (!row.recurrenceRule) {
       if (endTime >= rangeStart && startTime <= rangeEnd) {
-        pushCalendarBlock(expanded, row, resource, startTime, endTime, "");
-      }
-      continue;
-    }
-
-    try {
-      const rule = buildRRule(startTime, row.recurrenceRule);
-      const occurrences = rule.between(rangeStart, rangeEnd, true);
-      occurrences.forEach((occurrence, index) => {
         pushCalendarBlock(
           expanded,
           row,
           resource,
-          occurrence,
-          new Date(occurrence.getTime() + duration),
-          `-${index}`,
+          startTime,
+          endTime,
+          "",
+          rangeStart,
+          rangeEnd,
         );
-      });
-    } catch {
-      if (endTime >= rangeStart && startTime <= rangeEnd) {
-        pushCalendarBlock(expanded, row, resource, startTime, endTime, "");
       }
+      continue;
     }
+
+    const blocks = expandRecurringEvents(
+      [
+        {
+          startTime,
+          endTime,
+          recurrenceRule: row.recurrenceRule,
+        },
+      ],
+      rangeStart,
+      rangeEnd,
+    );
+
+    blocks.forEach((block, index) => {
+      pushCalendarBlock(
+        expanded,
+        row,
+        resource,
+        block.start,
+        block.end,
+        `-${index}`,
+        rangeStart,
+        rangeEnd,
+      );
+    });
   }
 
   return expanded;
