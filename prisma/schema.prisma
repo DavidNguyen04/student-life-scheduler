@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SyllabusSourceType {
+  pdf
+  html
+  text
+}
+
+enum ItemSource {
+  manual
+  parsed
+  canvas
+}
+
+enum ScheduleEventType {
+  coursework
+  time_off
+  workout
+  sleep
+  meal
+  study_suggestion
+}
+
+enum SyncStatus {
+  pending
+  success
+  error
+}
+
+model User {
+  id               String            @id @default(cuid())
+  name             String?
+  email            String            @unique
+  emailVerified    DateTime?
+  passwordHash     String?
+  image            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  accounts         Account[]
+  sessions         Session[]
+  courses          Course[]
+  scheduleEvents   ScheduleEvent[]
+  canvasConnection CanvasConnection?
+  syncLogs         SyncLog[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Course {
+  id              String           @id @default(cuid())
+  userId          String
+  name            String
+  term            String?
+  color           String           @default("#6366f1")
+  canvasCourseId  String?
+  currentScore    Float?
+  currentGrade    String?
+  finalScore      Float?
+  finalGrade      String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syllabus        Syllabus?
+  assignments     Assignment[]
+  exams           Exam[]
+  scheduleEvents  ScheduleEvent[]
+  resources       CourseResource[]
+  gradeSnapshots  GradeSnapshot[]
+
+  @@index([userId])
+  @@index([canvasCourseId])
+}
+
+model Syllabus {
+  id         String             @id @default(cuid())
+  courseId   String             @unique
+  sourceType SyllabusSourceType
+  rawContent String             @db.Text
+  fileName   String?
+  parsedAt   DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  course     Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model Assignment {
+  id               String          @id @default(cuid())
+  courseId         String
+  title            String
+  dueDate          DateTime?
+  points           Float?
+  source           ItemSource      @default(manual)
+  canvasAssignmentId String?
+  submitted        Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  course           Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  scheduleEvent    ScheduleEvent?
+
+  @@index([courseId])
+  @@index([dueDate])
+}
+
+model Exam {
+  id        String     @id @default(cuid())
+  courseId  String
+  title     String
+  dateTime  DateTime
+  location  String?
+  source    ItemSource @default(manual)
+  canvasEventId String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([dateTime])
+}
+
+model ScheduleEvent {
+  id             String            @id @default(cuid())
+  userId         String
+  courseId       String?
+  assignmentId   String?           @unique
+  title          String
+  type           ScheduleEventType
+  startTime      DateTime
+  endTime        DateTime
+  recurrenceRule String?
+  isSuggested    Boolean           @default(false)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course         Course?           @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  assignment     Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([startTime])
+}
+
+model CanvasConnection {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  baseUrl      String
+  encryptedToken String @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SyncLog {
+  id        String     @id @default(cuid())
+  userId    String
+  status    SyncStatus
+  message   String?
+  details   Json?
+  createdAt DateTime   @default(now())
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model GradeSnapshot {
+  id           String   @id @default(cuid())
+  courseId     String
+  currentScore Float?
+  currentGrade String?
+  finalScore   Float?
+  finalGrade   String?
+  capturedAt   DateTime @default(now())
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+}
+
+model CourseResource {
+  id        String          @id @default(cuid())
+  courseId  String
+  title     String
+  content   String          @db.Text
+  sourceType String         @default("upload")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  course    Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  chunks    ResourceChunk[]
+
+  @@index([courseId])
+}
+
+model ResourceChunk {
+  id         String         @id @default(cuid())
+  resourceId String
+  content    String         @db.Text
+  embedding  Float[]
+  createdAt  DateTime       @default(now())
+  resource   CourseResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([resourceId])
+}
