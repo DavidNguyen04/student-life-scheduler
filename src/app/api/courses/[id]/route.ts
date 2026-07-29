@@ -25,6 +25,17 @@ export async function GET(
       syllabus: true,
       assignments: { orderBy: { dueDate: "asc" } },
       exams: { orderBy: { dateTime: "asc" } },
+      resources: {
+        where: { sourceType: { not: "syllabus" } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          title: true,
+          sourceType: true,
+          fileName: true,
+          createdAt: true,
+        },
+      },
     },
   });
 

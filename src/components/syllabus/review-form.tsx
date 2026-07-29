@@ -11,7 +11,7 @@ type Props = {
     courseName: string;
     term: string | null;
     color: string;
-    sourceType: "pdf" | "html" | "text";
+    sourceType: "pdf" | "docx" | "html" | "text";
     rawContent: string;
     fileName?: string;
     assignments: ParsedAssignment[];
@@ -43,7 +43,7 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
         courseName: courseName.trim(),
         term: term.trim() || null,
         color,
-        sourceType: initial.sourceType as "pdf" | "html" | "text",
+        sourceType: initial.sourceType as "pdf" | "docx" | "html" | "text",
         rawContent,
         fileName: initial.fileName,
         assignments,

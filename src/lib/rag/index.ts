@@ -50,10 +50,11 @@ export async function indexCourseContent(
   courseId: string,
   title: string,
   content: string,
-  sourceType = "syllabus",
+  sourceType = "upload",
+  fileName?: string | null,
 ) {
   const resource = await prisma.courseResource.create({
-    data: { courseId, title, content, sourceType },
+    data: { courseId, title, content, sourceType, fileName: fileName ?? null },
   });
 
   const chunks = chunkText(content);
