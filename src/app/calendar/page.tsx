@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
-import { addDays, startOfDay, startOfWeek } from "date-fns";
+import { addDays, endOfDay, startOfDay, startOfWeek } from "date-fns";
+import type { View } from "react-big-calendar";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
 import { blocksInRange, splitBlockAtMidnight } from "@/lib/schedule/blocks";
 import {
@@ -18,11 +19,12 @@ import {
 } from "@/lib/schedule/templates";
 
 const EVENT_TYPES = [
+  { value: "lecture", label: "Lecture" },
   { value: "sleep", label: "Sleep" },
   { value: "meal", label: "Meal" },
   { value: "workout", label: "Workout" },
   { value: "time_off", label: "Time off" },
-  { value: "coursework", label: "Study block" },
+  { value: "coursework", label: "Coursework" },
 ];
 
 type ScheduleEventRow = {
@@ -32,7 +34,11 @@ type ScheduleEventRow = {
   endTime: string;
   type: string;
   recurrenceRule: string | null;
-  course?: { color?: string; name?: string };
+  readOnly?: boolean;
+  courseId?: string;
+  assignmentId?: string;
+  examId?: string;
+  course?: { id?: string; color?: string; name?: string };
 };
 
 type EventForm = {
@@ -95,8 +101,12 @@ function expandEventsForRange(
       type: row.type,
       color: row.course?.color,
       courseName: row.course?.name,
-      scheduleEventId: row.id,
+      scheduleEventId: row.readOnly ? undefined : row.id,
       recurrenceRule: row.recurrenceRule,
+      readOnly: row.readOnly,
+      courseId: row.courseId ?? row.course?.id,
+      assignmentId: row.assignmentId,
+      examId: row.examId,
     };
 
     if (!row.recurrenceRule) {
@@ -166,10 +176,11 @@ export default function CalendarPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
+  const [readOnlyEvent, setReadOnlyEvent] = useState<CalendarEvent | null>(null);
 
-  const loadEvents = useCallback(async () => {
-    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
-    const end = addDays(start, 14);
+  const loadEvents = useCallback(async (rangeStart?: Date, rangeEnd?: Date) => {
+    const start = rangeStart ?? startOfWeek(new Date(), { weekStartsOn: 0 });
+    const end = rangeEnd ?? addDays(start, 14);
     const res = await fetch(
       `/api/schedule?start=${start.toISOString()}&end=${end.toISOString()}`,
     );
@@ -183,13 +194,17 @@ export default function CalendarPage() {
     setError("");
   }, []);
 
+  const handleRangeChange = useCallback(
+    (range: Date[] | { start: Date; end: Date }, _view?: View) => {
+      const start = Array.isArray(range) ? range[0] : range.start;
+      const end = Array.isArray(range) ? range[range.length - 1] : range.end;
+      void loadEvents(startOfDay(start), endOfDay(addDays(end, 7)));
+    },
+    [loadEvents],
+  );
+
   useEffect(() => {
-    async function init() {
-      await fetch("/api/schedule?action=schedule-assignments", { method: "PATCH" });
-      await fetch("/api/schedule/suggestions", { method: "GET" });
-      await loadEvents();
-    }
-    init();
+    loadEvents();
   }, [loadEvents]);
 
   function openNewEventForm(slot?: { start: Date; end: Date }) {
@@ -211,6 +226,11 @@ export default function CalendarPage() {
   }
 
   function openEditEventForm(event: CalendarEvent) {
+    if (event.resource?.readOnly) {
+      setReadOnlyEvent(event);
+      return;
+    }
+
     const scheduleEventId =
       event.resource?.scheduleEventId ??
       event.id.replace(/-\d+$/, "");
@@ -331,7 +351,7 @@ export default function CalendarPage() {
         <div>
           <h1 className="text-2xl font-semibold">Calendar</h1>
           <p className="text-sm text-zinc-500">
-            Click any block to edit. Sleep, meals, workouts, and coursework in one view.
+            Lectures, assignments, exams, sleep, meals, and other blocks in one view.
           </p>
         </div>
         <div className="flex gap-2">
@@ -356,12 +376,14 @@ export default function CalendarPage() {
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs">
         {Object.entries({
-          coursework: "#6366f1",
+          lecture: "#6366f1",
+          assignment: "#ec4899",
+          exam: "#ef4444",
           sleep: "#312e81",
           meal: "#f59e0b",
           workout: "#22c55e",
           time_off: "#94a3b8",
-          study_suggestion: "#a855f7",
+          coursework: "#818cf8",
         }).map(([type, color]) => (
           <span key={type} className="flex items-center gap-1">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
@@ -373,10 +395,51 @@ export default function CalendarPage() {
       <div className="mt-4">
         <WeekCalendar
           events={events}
+          onRangeChange={handleRangeChange}
           onSelectSlot={(slot) => openNewEventForm(slot)}
           onSelectEvent={openEditEventForm}
         />
       </div>
+
+      {readOnlyEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-lg">
+            <p className="text-xs uppercase tracking-wide text-zinc-500">
+              {readOnlyEvent.resource?.type === "exam" ? "Exam" : "Assignment due"}
+            </p>
+            <h2 className="mt-1 font-medium">{readOnlyEvent.title}</h2>
+            {readOnlyEvent.resource?.courseName && (
+              <p className="mt-1 text-sm text-zinc-600">{readOnlyEvent.resource.courseName}</p>
+            )}
+            <p className="mt-2 text-sm text-zinc-500">
+              {readOnlyEvent.start.toLocaleString(undefined, {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setReadOnlyEvent(null)}
+                className="rounded px-3 py-2 text-sm text-zinc-600"
+              >
+                Close
+              </button>
+              {readOnlyEvent.resource?.courseId && (
+                <a
+                  href={`/courses/${readOnlyEvent.resource.courseId}`}
+                  className="rounded bg-indigo-600 px-3 py-2 text-sm text-white hover:bg-indigo-700"
+                >
+                  Open course
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">

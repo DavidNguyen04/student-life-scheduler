@@ -8,6 +8,7 @@ import {
   templatesFromScheduleEvents,
   type DailyTemplates,
 } from "@/lib/schedule/templates";
+import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
 import { z } from "zod";
 
 const timeSlotSchema = z.object({
@@ -76,6 +77,8 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  await scheduleUserCalendar(userId);
+
   return NextResponse.json({ ok: true, templates: body });
 }
 
@@ -85,23 +88,7 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const userId = session.user.id;
-  const templateEvents = buildAllTemplateEvents(DEFAULT_DAILY_TEMPLATES);
+  await scheduleUserCalendar(session.user.id);
 
-  for (const template of templateEvents) {
-    const exists = await prisma.scheduleEvent.findFirst({
-      where: {
-        userId,
-        title: template.title,
-        recurrenceRule: { not: null },
-      },
-    });
-    if (!exists) {
-      await prisma.scheduleEvent.create({
-        data: { userId, ...template },
-      });
-    }
-  }
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, templates: DEFAULT_DAILY_TEMPLATES });
 }

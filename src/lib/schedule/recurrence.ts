@@ -1,6 +1,16 @@
-import { RRule } from "rrule";
+import { RRule, type Weekday } from "rrule";
 import { addDays, startOfDay } from "date-fns";
 import { blocksInRange } from "@/lib/schedule/blocks";
+
+const RRULE_DAY: Record<string, Weekday> = {
+  MO: RRule.MO,
+  TU: RRule.TU,
+  WE: RRule.WE,
+  TH: RRule.TH,
+  FR: RRule.FR,
+  SA: RRule.SA,
+  SU: RRule.SU,
+};
 
 function parseRecurrenceFrequency(normalized: string) {
   if (normalized.includes("FREQ=WEEKLY")) {
@@ -9,20 +19,31 @@ function parseRecurrenceFrequency(normalized: string) {
   return RRule.DAILY;
 }
 
+function parseByWeekday(normalized: string): Weekday[] | undefined {
+  const bydayMatch = normalized.match(/BYDAY=([A-Z,]+)/);
+  if (!bydayMatch) return undefined;
+
+  return bydayMatch[1]
+    .split(",")
+    .map((day) => RRULE_DAY[day.trim()])
+    .filter(Boolean);
+}
+
 export function buildRRule(dtstart: Date, recurrenceRule: string): RRule {
   const normalized = recurrenceRule.trim();
   const freq = parseRecurrenceFrequency(normalized);
+  const byweekday = parseByWeekday(normalized);
 
   if (normalized.includes("DTSTART") || normalized.startsWith("RRULE:")) {
     try {
       return RRule.fromString(normalized);
     } catch {
-      return new RRule({ freq, dtstart });
+      return new RRule({ freq, dtstart, ...(byweekday ? { byweekday } : {}) });
     }
   }
 
   if (normalized.includes("FREQ=DAILY") || normalized.includes("FREQ=WEEKLY")) {
-    return new RRule({ freq, dtstart });
+    return new RRule({ freq, dtstart, ...(byweekday ? { byweekday } : {}) });
   }
 
   return new RRule({ freq: RRule.DAILY, dtstart });
@@ -30,6 +51,10 @@ export function buildRRule(dtstart: Date, recurrenceRule: string): RRule {
 
 export function formatRecurrenceRule(_dtstart: Date, freq: "DAILY" | "WEEKLY"): string {
   return `FREQ=${freq}`;
+}
+
+export function formatWeeklyRecurrenceRule(byday: string[]): string {
+  return `FREQ=WEEKLY;BYDAY=${byday.join(",")}`;
 }
 
 function isDailyRecurrence(recurrenceRule: string): boolean {

@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
-import {
-  buildAllTemplateEvents,
-  DEFAULT_DAILY_TEMPLATES,
-} from "@/lib/schedule/templates";
-import { scheduleAllAssignments } from "@/lib/schedule/assignment-scheduling";
+import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
 
 const createSchema = z.object({
   title: z.string().min(1),
-  type: z.enum(["coursework", "time_off", "workout", "sleep", "meal", "study_suggestion"]),
+  type: z.enum([
+    "coursework",
+    "lecture",
+    "time_off",
+    "workout",
+    "sleep",
+    "meal",
+    "study_suggestion",
+  ]),
   startTime: z.string(),
   endTime: z.string(),
   courseId: z.string().nullable().optional(),
@@ -26,28 +30,103 @@ export async function GET(req: NextRequest) {
   const start = req.nextUrl.searchParams.get("start");
   const end = req.nextUrl.searchParams.get("end");
 
-  const events = await prisma.scheduleEvent.findMany({
-    where: {
-      userId: session.user.id,
-      ...(start && end
-        ? {
-            OR: [
-              { recurrenceRule: { not: null } },
-              {
-                startTime: { lte: new Date(end) },
-                endTime: { gte: new Date(start) },
+  const rangeFilter =
+    start && end
+      ? {
+          start: new Date(start),
+          end: new Date(end),
+        }
+      : null;
+
+  const [events, assignments, exams] = await Promise.all([
+    prisma.scheduleEvent.findMany({
+      where: {
+        userId: session.user.id,
+        ...(rangeFilter
+          ? {
+              OR: [
+                { recurrenceRule: { not: null } },
+                {
+                  startTime: { lte: rangeFilter.end },
+                  endTime: { gte: rangeFilter.start },
+                },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        course: { select: { id: true, name: true, color: true } },
+      },
+      orderBy: { startTime: "asc" },
+    }),
+    prisma.assignment.findMany({
+      where: {
+        course: { userId: session.user.id },
+        dueDate: { not: null },
+        scheduleEvent: null,
+        ...(rangeFilter
+          ? {
+              dueDate: {
+                gte: rangeFilter.start,
+                lte: rangeFilter.end,
               },
-            ],
-          }
-        : {}),
-    },
-    include: {
-      course: { select: { id: true, name: true, color: true } },
-    },
-    orderBy: { startTime: "asc" },
+            }
+          : {}),
+      },
+      include: {
+        course: { select: { id: true, name: true, color: true } },
+      },
+      orderBy: { dueDate: "asc" },
+    }),
+    prisma.exam.findMany({
+      where: {
+        course: { userId: session.user.id },
+        ...(rangeFilter
+          ? {
+              dateTime: {
+                gte: rangeFilter.start,
+                lte: rangeFilter.end,
+              },
+            }
+          : {}),
+      },
+      include: {
+        course: { select: { id: true, name: true, color: true } },
+      },
+      orderBy: { dateTime: "asc" },
+    }),
+  ]);
+
+  const assignmentEvents = assignments.map((assignment) => {
+    const dueDate = assignment.dueDate!;
+    return {
+      id: `assignment-${assignment.id}`,
+      title: assignment.title,
+      startTime: dueDate.toISOString(),
+      endTime: new Date(dueDate.getTime() + 30 * 60 * 1000).toISOString(),
+      type: "assignment",
+      recurrenceRule: null,
+      course: assignment.course,
+      courseId: assignment.courseId,
+      assignmentId: assignment.id,
+      readOnly: true,
+    };
   });
 
-  return NextResponse.json(events);
+  const examEvents = exams.map((exam) => ({
+    id: `exam-${exam.id}`,
+    title: exam.title,
+    startTime: exam.dateTime.toISOString(),
+    endTime: new Date(exam.dateTime.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+    type: "exam",
+    recurrenceRule: null,
+    course: exam.course,
+    courseId: exam.courseId,
+    examId: exam.id,
+    readOnly: true,
+  }));
+
+  return NextResponse.json([...events, ...assignmentEvents, ...examEvents]);
 }
 
 export async function POST(req: NextRequest) {
@@ -126,31 +205,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   const action = req.nextUrl.searchParams.get("action");
-  if (action === "apply-templates") {
-    const userId = session.user.id;
-    const templateEvents = buildAllTemplateEvents(DEFAULT_DAILY_TEMPLATES);
-
-    for (const template of templateEvents) {
-      const exists = await prisma.scheduleEvent.findFirst({
-        where: {
-          userId,
-          title: template.title,
-          recurrenceRule: { not: null },
-        },
-      });
-      if (!exists) {
-        await prisma.scheduleEvent.create({
-          data: { userId, ...template },
-        });
-      }
-    }
-
+  if (action === "apply-templates" || action === "refresh-calendar") {
+    await scheduleUserCalendar(session.user.id);
     return NextResponse.json({ ok: true });
-  }
-
-  if (action === "schedule-assignments") {
-    const scheduled = await scheduleAllAssignments(session.user.id);
-    return NextResponse.json({ ok: true, scheduled });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
