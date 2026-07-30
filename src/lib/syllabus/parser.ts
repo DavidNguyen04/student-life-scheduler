@@ -388,9 +388,48 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 11);
 }
 
-function toDueDate(date: Date): string {
+type TimeHint = { hours: number; minutes: number };
+
+function extractTimeFromText(text: string): TimeHint | null {
+  const rangeMatch = text.match(
+    /\b(\d{1,2})(?::(\d{2}))?\s*(?:([ap])\.?m\.?)?\s*(?:-|–|—|to)\s*\d{1,2}(?::\d{2})?\s*([ap])\.?m\.?\b/i,
+  );
+  if (rangeMatch) {
+    const meridiem = (rangeMatch[3] ?? rangeMatch[4]).toLowerCase();
+    let hours = Number(rangeMatch[1]);
+    const minutes = Number(rangeMatch[2] ?? "0");
+    if (meridiem === "p" && hours < 12) hours += 12;
+    if (meridiem === "a" && hours === 12) hours = 0;
+    if (hours <= 23 && minutes <= 59) return { hours, minutes };
+  }
+
+  const singleMatch = text.match(/\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b/i);
+  if (singleMatch) {
+    let hours = Number(singleMatch[1]);
+    const minutes = Number(singleMatch[2] ?? "0");
+    const meridiem = singleMatch[3].toLowerCase();
+    if (meridiem === "p" && hours < 12) hours += 12;
+    if (meridiem === "a" && hours === 12) hours = 0;
+    if (hours <= 23 && minutes <= 59) return { hours, minutes };
+  }
+
+  return null;
+}
+
+const DEFAULT_DUE_TIME: TimeHint = { hours: 23, minutes: 59 };
+
+function toDueDate(date: Date, time?: TimeHint | null): string {
+  const { hours, minutes } = time ?? DEFAULT_DUE_TIME;
+  // Build using the local (server) timezone, not UTC: the extracted hour/minute
+  // is a wall-clock time (e.g. "9:30 AM"), not a UTC time. Using Date.UTC here
+  // would store the wrong instant once converted back to local time for display.
   return new Date(
-    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0),
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    hours,
+    minutes,
+    0,
   ).toISOString();
 }
 
@@ -480,6 +519,7 @@ function addAssignment(
   line: string,
   date: Date,
   explicitTitle?: string,
+  timeHint?: TimeHint | null,
 ) {
   const dateKey = date.toISOString().slice(0, 10);
   let title = (explicitTitle ?? cleanTitle(line, "assignment")).trim();
@@ -513,7 +553,7 @@ function addAssignment(
   assignments.push({
     id: uid(),
     title,
-    dueDate: toDueDate(date),
+    dueDate: toDueDate(date, timeHint ?? extractTimeFromText(line)),
     points: extractPoints(line),
     accepted: true,
   });
@@ -525,6 +565,7 @@ function addExam(
   line: string,
   date: Date,
   explicitTitle?: string,
+  timeHint?: TimeHint | null,
 ) {
   const dateKey = date.toISOString().slice(0, 10);
   const title = (explicitTitle ?? cleanTitle(line, "exam")).trim();
@@ -549,7 +590,7 @@ function addExam(
   exams.push({
     id: uid(),
     title,
-    dateTime: toDueDate(date),
+    dateTime: toDueDate(date, timeHint ?? extractTimeFromText(line)),
     location: null,
     accepted: true,
   });
@@ -713,6 +754,14 @@ function extractItems(
 
     if (!date) continue;
 
+    let timeHint = extractTimeFromText(line);
+    if (!timeHint) {
+      const timeLine = lines[index + 1];
+      if (timeLine && !hasDateHint(timeLine) && TIME_RANGE.test(timeLine)) {
+        timeHint = extractTimeFromText(timeLine);
+      }
+    }
+
     const hasContext =
       hasDateHint(line) ||
       isAssignmentLine(line) ||
@@ -725,15 +774,15 @@ function extractItems(
 
     if (isExamLine(line)) {
       if (/\bdue\b/i.test(line) && isAssignmentLine(line) && !/^(?:Midterm|MIDTERM|Final|Examination)/i.test(line.trim())) {
-        addAssignment(assignments, seen, line, date, explicitTitle);
+        addAssignment(assignments, seen, line, date, explicitTitle, timeHint);
       } else {
-        addExam(exams, seen, line, date, explicitTitle);
+        addExam(exams, seen, line, date, explicitTitle, timeHint);
       }
       continue;
     }
 
     if (isAssignmentLine(line)) {
-      addAssignment(assignments, seen, line, date, explicitTitle);
+      addAssignment(assignments, seen, line, date, explicitTitle, timeHint);
     }
   }
 

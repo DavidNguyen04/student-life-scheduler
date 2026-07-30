@@ -8,6 +8,7 @@ import type {
   ParsedLecture,
 } from "@/lib/syllabus/parser";
 import { COURSE_COLORS } from "@/lib/utils";
+import { fromDatetimeLocalValue, toDatetimeLocalValue } from "@/lib/schedule/datetime";
 
 const WEEKDAY_OPTIONS = [
   { code: "MO", label: "Mon" },
@@ -266,7 +267,7 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
               />
               <input
                 type="datetime-local"
-                value={a.dueDate ? a.dueDate.slice(0, 16) : ""}
+                value={a.dueDate ? toDatetimeLocalValue(new Date(a.dueDate)) : ""}
                 onChange={(e) =>
                   setAssignments((prev) =>
                     prev.map((x) =>
@@ -274,7 +275,7 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
                         ? {
                             ...x,
                             dueDate: e.target.value
-                              ? new Date(e.target.value).toISOString()
+                              ? fromDatetimeLocalValue(e.target.value).toISOString()
                               : null,
                           }
                         : x,
@@ -320,12 +321,15 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
               />
               <input
                 type="datetime-local"
-                value={exam.dateTime.slice(0, 16)}
+                value={toDatetimeLocalValue(new Date(exam.dateTime))}
                 onChange={(e) =>
                   setExams((prev) =>
                     prev.map((x) =>
                       x.id === exam.id
-                        ? { ...x, dateTime: new Date(e.target.value).toISOString() }
+                        ? {
+                            ...x,
+                            dateTime: fromDatetimeLocalValue(e.target.value).toISOString(),
+                          }
                         : x,
                     ),
                   )

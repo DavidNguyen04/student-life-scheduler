@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { endOfDay } from "date-fns";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
 import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
+
+/** Cap due-event end at end-of-day so a 30-min window after 11:59 PM doesn't cross midnight. */
+function dueEventEnd(dueDate: Date, durationMs: number): Date {
+  return new Date(Math.min(dueDate.getTime() + durationMs, endOfDay(dueDate).getTime()));
+}
 
 const createSchema = z.object({
   title: z.string().min(1),
@@ -99,11 +105,12 @@ export async function GET(req: NextRequest) {
 
   const assignmentEvents = assignments.map((assignment) => {
     const dueDate = assignment.dueDate!;
+    const endTime = dueEventEnd(dueDate, 30 * 60 * 1000);
     return {
       id: `assignment-${assignment.id}`,
       title: assignment.title,
       startTime: dueDate.toISOString(),
-      endTime: new Date(dueDate.getTime() + 30 * 60 * 1000).toISOString(),
+      endTime: endTime.toISOString(),
       type: "assignment",
       recurrenceRule: null,
       course: assignment.course,
@@ -113,18 +120,21 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  const examEvents = exams.map((exam) => ({
-    id: `exam-${exam.id}`,
-    title: exam.title,
-    startTime: exam.dateTime.toISOString(),
-    endTime: new Date(exam.dateTime.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-    type: "exam",
-    recurrenceRule: null,
-    course: exam.course,
-    courseId: exam.courseId,
-    examId: exam.id,
-    readOnly: true,
-  }));
+  const examEvents = exams.map((exam) => {
+    const endTime = dueEventEnd(exam.dateTime, 2 * 60 * 60 * 1000);
+    return {
+      id: `exam-${exam.id}`,
+      title: exam.title,
+      startTime: exam.dateTime.toISOString(),
+      endTime: endTime.toISOString(),
+      type: "exam",
+      recurrenceRule: null,
+      course: exam.course,
+      courseId: exam.courseId,
+      examId: exam.id,
+      readOnly: true,
+    };
+  });
 
   return NextResponse.json([...events, ...assignmentEvents, ...examEvents]);
 }
