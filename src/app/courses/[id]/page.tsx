@@ -284,7 +284,7 @@ export default function CourseDetailPage() {
               <li key={a.id} className="flex justify-between text-sm">
                 <span>{a.title}</span>
                 <span className="text-zinc-500">
-                  {a.dueDate ? formatDate(new Date(a.dueDate)) : "—"}
+                  {a.dueDate ? formatDateTime(new Date(a.dueDate)) : "—"}
                 </span>
               </li>
             ))}

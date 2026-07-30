@@ -15,7 +15,12 @@ export type TemplateTimeSlot = {
   end: string;
 };
 
+export type TemplateSlotConfig = TemplateTimeSlot & {
+  blockTime: boolean;
+};
+
 export type DailyTemplates = Record<TemplateKey, TemplateTimeSlot>;
+export type DailyTemplateSettings = Record<TemplateKey, TemplateSlotConfig>;
 
 export const DEFAULT_DAILY_TEMPLATES: DailyTemplates = {
   sleep: { start: "23:00", end: "07:00" },
@@ -24,7 +29,14 @@ export const DEFAULT_DAILY_TEMPLATES: DailyTemplates = {
   dinner: { start: "18:30", end: "19:00" },
 };
 
-const TEMPLATE_META: Record<
+export const DEFAULT_DAILY_TEMPLATE_SETTINGS: DailyTemplateSettings = {
+  sleep: { ...DEFAULT_DAILY_TEMPLATES.sleep, blockTime: true },
+  breakfast: { ...DEFAULT_DAILY_TEMPLATES.breakfast, blockTime: true },
+  lunch: { ...DEFAULT_DAILY_TEMPLATES.lunch, blockTime: true },
+  dinner: { ...DEFAULT_DAILY_TEMPLATES.dinner, blockTime: true },
+};
+
+export const TEMPLATE_META: Record<
   TemplateKey,
   { title: string; type: "sleep" | "meal" }
 > = {
@@ -47,6 +59,13 @@ export function parseTimeOnDate(baseDate: Date, time: string): Date {
 
 export function formatTimeValue(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Normalize browser time inputs like "9:00" or "09:00:00" to "HH:MM". */
+export function normalizeTimeInput(value: string): string {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return value;
+  return `${match[1].padStart(2, "0")}:${match[2]}`;
 }
 
 export function buildTemplateEventData(
@@ -113,18 +132,74 @@ export function templatesFromScheduleEvents(
     endTime: Date;
     recurrenceRule: string | null;
   }>,
-): DailyTemplates {
+): DailyTemplateSettings {
   const recurring = events.filter((event) => event.recurrenceRule);
   const byTitle = new Map(recurring.map((event) => [event.title, event]));
-  const result = { ...DEFAULT_DAILY_TEMPLATES };
+  const result = { ...DEFAULT_DAILY_TEMPLATE_SETTINGS };
 
   for (const key of Object.keys(TEMPLATE_META) as TemplateKey[]) {
     const event = byTitle.get(TEMPLATE_META[key].title);
-    if (!event) continue;
+    if (!event) {
+      result[key] = { ...DEFAULT_DAILY_TEMPLATE_SETTINGS[key], blockTime: false };
+      continue;
+    }
     result[key] = {
       start: formatTimeValue(event.startTime),
       end: formatTimeValue(event.endTime),
+      blockTime: true,
     };
+  }
+
+  return result;
+}
+
+export function parseDailyTemplateSettings(raw: unknown): DailyTemplateSettings {
+  if (!raw || typeof raw !== "object") {
+    return { ...DEFAULT_DAILY_TEMPLATE_SETTINGS };
+  }
+
+  const result = { ...DEFAULT_DAILY_TEMPLATE_SETTINGS };
+  for (const key of Object.keys(TEMPLATE_META) as TemplateKey[]) {
+    const slot = (raw as Record<string, unknown>)[key];
+    if (!slot || typeof slot !== "object") continue;
+
+    const value = slot as Record<string, unknown>;
+    if (typeof value.start === "string" && /^\d{2}:\d{2}$/.test(value.start)) {
+      result[key].start = value.start;
+    }
+    if (typeof value.end === "string" && /^\d{2}:\d{2}$/.test(value.end)) {
+      result[key].end = value.end;
+    }
+    if (typeof value.blockTime === "boolean") {
+      result[key].blockTime = value.blockTime;
+    }
+  }
+
+  return result;
+}
+
+export function mergeTemplateSettings(
+  saved: DailyTemplateSettings,
+  events: Array<{
+    title: string;
+    startTime: Date;
+    endTime: Date;
+    recurrenceRule: string | null;
+  }>,
+): DailyTemplateSettings {
+  const fromEvents = templatesFromScheduleEvents(events);
+  const result = { ...saved };
+
+  for (const key of Object.keys(TEMPLATE_META) as TemplateKey[]) {
+    const event = fromEvents[key];
+    if (event.blockTime) {
+      result[key] = {
+        ...result[key],
+        start: event.start,
+        end: event.end,
+        blockTime: true,
+      };
+    }
   }
 
   return result;

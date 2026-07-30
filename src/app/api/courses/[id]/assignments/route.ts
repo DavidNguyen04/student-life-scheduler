@@ -9,6 +9,12 @@ const assignmentSchema = z.object({
   points: z.number().nullable().optional(),
 });
 
+const updateAssignmentSchema = z.object({
+  title: z.string().min(1).optional(),
+  dueDate: z.string().nullable().optional(),
+  points: z.number().nullable().optional(),
+});
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -38,6 +44,48 @@ export async function POST(
   });
 
   return NextResponse.json(assignment);
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id: courseId } = await params;
+  const assignmentId = req.nextUrl.searchParams.get("assignmentId");
+  if (!assignmentId) {
+    return NextResponse.json({ error: "assignmentId required" }, { status: 400 });
+  }
+
+  const body = updateAssignmentSchema.parse(await req.json());
+  const assignment = await prisma.assignment.updateMany({
+    where: {
+      id: assignmentId,
+      courseId,
+      course: { userId: session.user.id },
+    },
+    data: {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.dueDate !== undefined
+        ? { dueDate: body.dueDate ? new Date(body.dueDate) : null }
+        : {}),
+      ...(body.points !== undefined ? { points: body.points } : {}),
+    },
+  });
+
+  if (assignment.count === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const updated = await prisma.assignment.findFirst({
+    where: { id: assignmentId, courseId },
+  });
+
+  return NextResponse.json(updated);
 }
 
 export async function DELETE(

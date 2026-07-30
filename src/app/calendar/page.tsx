@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
+import { DailyTemplatesModal } from "@/components/calendar/daily-templates-modal";
 import { addDays, endOfDay, startOfDay, startOfWeek } from "date-fns";
 import type { View } from "react-big-calendar";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
@@ -43,6 +44,8 @@ type ScheduleEventRow = {
 
 type EventForm = {
   scheduleEventId: string | null;
+  assignmentId: string | null;
+  courseId: string | null;
   title: string;
   type: string;
   startTime: string;
@@ -54,6 +57,8 @@ type EventForm = {
 
 const EMPTY_FORM: EventForm = {
   scheduleEventId: null,
+  assignmentId: null,
+  courseId: null,
   title: "",
   type: "workout",
   startTime: "",
@@ -159,6 +164,8 @@ function formFromRow(row: ScheduleEventRow): EventForm {
   const end = new Date(row.endTime);
   return {
     scheduleEventId: row.id,
+    assignmentId: null,
+    courseId: row.courseId ?? row.course?.id ?? null,
     title: row.title,
     type: row.type,
     startTime: toDatetimeLocalValue(start),
@@ -166,6 +173,22 @@ function formFromRow(row: ScheduleEventRow): EventForm {
     startTimeOnly: formatTimeValue(start),
     endTimeOnly: formatTimeValue(end),
     recurring: Boolean(row.recurrenceRule),
+  };
+}
+
+function formFromAssignmentRow(row: ScheduleEventRow): EventForm {
+  const due = new Date(row.startTime);
+  return {
+    scheduleEventId: null,
+    assignmentId: row.assignmentId ?? null,
+    courseId: row.courseId ?? row.course?.id ?? null,
+    title: row.title,
+    type: "assignment",
+    startTime: toDatetimeLocalValue(due),
+    endTime: "",
+    startTimeOnly: "09:00",
+    endTimeOnly: "10:00",
+    recurring: false,
   };
 }
 
@@ -177,10 +200,15 @@ export default function CalendarPage() {
   const [error, setError] = useState("");
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
   const [readOnlyEvent, setReadOnlyEvent] = useState<CalendarEvent | null>(null);
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const calendarRangeRef = useRef({
+    start: startOfWeek(new Date(), { weekStartsOn: 0 }),
+    end: endOfDay(addDays(startOfWeek(new Date(), { weekStartsOn: 0 }), 14)),
+  });
 
   const loadEvents = useCallback(async (rangeStart?: Date, rangeEnd?: Date) => {
-    const start = rangeStart ?? startOfWeek(new Date(), { weekStartsOn: 0 });
-    const end = rangeEnd ?? addDays(start, 14);
+    const start = rangeStart ?? calendarRangeRef.current.start;
+    const end = rangeEnd ?? calendarRangeRef.current.end;
     const res = await fetch(
       `/api/schedule?start=${start.toISOString()}&end=${end.toISOString()}`,
     );
@@ -191,6 +219,7 @@ export default function CalendarPage() {
     const data = (await res.json()) as ScheduleEventRow[];
     setScheduleRows(data);
     setEvents(expandEventsForRange(data, start, end));
+    calendarRangeRef.current = { start, end };
     setError("");
   }, []);
 
@@ -231,6 +260,19 @@ export default function CalendarPage() {
       return;
     }
 
+    if (event.resource?.assignmentId) {
+      const row = scheduleRows.find(
+        (item) => item.assignmentId === event.resource!.assignmentId,
+      );
+      if (!row) {
+        setError("Could not load assignment for editing");
+        return;
+      }
+      setForm(formFromAssignmentRow(row));
+      setShowForm(true);
+      return;
+    }
+
     const scheduleEventId =
       event.resource?.scheduleEventId ??
       event.id.replace(/-\d+$/, "");
@@ -243,21 +285,54 @@ export default function CalendarPage() {
     setShowForm(true);
   }
 
-  async function applyTemplates() {
+  async function handleTemplatesSaved() {
     setError("");
-    const res = await fetch("/api/schedule?action=apply-templates", { method: "PATCH" });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Failed to apply templates");
-      return;
-    }
-    await loadEvents();
+    await loadEvents(calendarRangeRef.current.start, calendarRangeRef.current.end);
+  }
+
+  function openTemplatesModal() {
+    setError("");
+    setShowTemplatesModal(true);
   }
 
   async function saveEvent(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError("");
+
+    if (form.assignmentId && form.courseId) {
+      const dueDate = fromDatetimeLocalValue(form.startTime);
+      if (Number.isNaN(dueDate.getTime())) {
+        setError("Invalid due date");
+        setSaving(false);
+        return;
+      }
+
+      const res = await fetch(
+        `/api/courses/${form.courseId}/assignments?assignmentId=${form.assignmentId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: form.title,
+            dueDate: dueDate.toISOString(),
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to save assignment");
+        setSaving(false);
+        return;
+      }
+
+      setSaving(false);
+      setShowForm(false);
+      setForm(EMPTY_FORM);
+      await loadEvents();
+      return;
+    }
 
     let start: Date;
     let end: Date;
@@ -323,6 +398,27 @@ export default function CalendarPage() {
   }
 
   async function deleteEvent() {
+    if (form.assignmentId && form.courseId) {
+      if (!confirm("Delete this assignment?")) return;
+
+      setSaving(true);
+      const res = await fetch(
+        `/api/courses/${form.courseId}/assignments?assignmentId=${form.assignmentId}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        setError("Failed to delete assignment");
+        setSaving(false);
+        return;
+      }
+
+      setSaving(false);
+      setShowForm(false);
+      setForm(EMPTY_FORM);
+      await loadEvents();
+      return;
+    }
+
     if (!form.scheduleEventId) return;
     if (!confirm("Delete this scheduled block?")) return;
 
@@ -342,8 +438,9 @@ export default function CalendarPage() {
     await loadEvents();
   }
 
-  const isEditing = Boolean(form.scheduleEventId);
-  const isDailyBlock = form.recurring || isTemplateTitle(form.title);
+  const isAssignment = Boolean(form.assignmentId);
+  const isEditing = Boolean(form.scheduleEventId || form.assignmentId);
+  const isDailyBlock = !isAssignment && (form.recurring || isTemplateTitle(form.title));
 
   return (
     <AppShell>
@@ -357,10 +454,10 @@ export default function CalendarPage() {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={applyTemplates}
+            onClick={openTemplatesModal}
             className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50"
           >
-            Apply daily templates
+            Edit daily templates
           </button>
           <button
             type="button"
@@ -401,24 +498,45 @@ export default function CalendarPage() {
         />
       </div>
 
+      <DailyTemplatesModal
+        open={showTemplatesModal}
+        onClose={() => setShowTemplatesModal(false)}
+        onSaved={handleTemplatesSaved}
+      />
+
       {readOnlyEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-sm rounded-lg bg-white p-6 shadow-lg">
             <p className="text-xs uppercase tracking-wide text-zinc-500">
-              {readOnlyEvent.resource?.type === "exam" ? "Exam" : "Assignment due"}
+              {readOnlyEvent.resource?.type === "exam"
+                ? "Exam"
+                : readOnlyEvent.resource?.type === "lecture"
+                  ? "Lecture"
+                  : "Assignment due"}
             </p>
             <h2 className="mt-1 font-medium">{readOnlyEvent.title}</h2>
             {readOnlyEvent.resource?.courseName && (
               <p className="mt-1 text-sm text-zinc-600">{readOnlyEvent.resource.courseName}</p>
             )}
             <p className="mt-2 text-sm text-zinc-500">
-              {readOnlyEvent.start.toLocaleString(undefined, {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {readOnlyEvent.resource?.type === "lecture"
+                ? `${readOnlyEvent.start.toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })} – ${readOnlyEvent.end.toLocaleTimeString(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}`
+                : readOnlyEvent.start.toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -447,7 +565,9 @@ export default function CalendarPage() {
             onSubmit={saveEvent}
             className="w-full max-w-md rounded-lg bg-white p-6 shadow-lg"
           >
-            <h2 className="font-medium">{isEditing ? "Edit event" : "New event"}</h2>
+            <h2 className="font-medium">
+              {isAssignment ? "Edit assignment" : isEditing ? "Edit event" : "New event"}
+            </h2>
             <div className="mt-4 space-y-3">
               <input
                 value={form.title}
@@ -456,19 +576,29 @@ export default function CalendarPage() {
                 className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
                 required
               />
-              <select
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-                className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
-              >
-                {EVENT_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
+              {!isAssignment && (
+                <select
+                  value={form.type}
+                  onChange={(e) => setForm({ ...form, type: e.target.value })}
+                  className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                >
+                  {EVENT_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              )}
 
-              {isDailyBlock ? (
+              {isAssignment ? (
+                <input
+                  type="datetime-local"
+                  value={form.startTime}
+                  onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                  className="w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                  required
+                />
+              ) : isDailyBlock ? (
                 <div className="flex items-center gap-2">
                   <input
                     type="time"
@@ -505,7 +635,7 @@ export default function CalendarPage() {
                 </>
               )}
 
-              {!isTemplateTitle(form.title) && (
+              {!isAssignment && !isTemplateTitle(form.title) && (
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -516,7 +646,7 @@ export default function CalendarPage() {
                 </label>
               )}
 
-              {isDailyBlock && (
+              {!isAssignment && isDailyBlock && (
                 <p className="text-xs text-zinc-500">
                   Daily blocks repeat every day. End time can be the next morning (e.g. sleep 23:00 → 07:00).
                 </p>

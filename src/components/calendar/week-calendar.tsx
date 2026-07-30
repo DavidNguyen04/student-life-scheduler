@@ -161,7 +161,7 @@ export function WeekCalendar({
               borderRadius: "4px",
               opacity: type === "sleep" ? 0.92 : type === "assignment" ? 0.95 : 1,
               fontSize: "0.75rem",
-              borderStyle: type === "assignment" || type === "exam" ? "dashed" : "solid",
+              borderStyle: type === "lecture" || type === "exam" ? "dashed" : "solid",
             },
           };
         }}
