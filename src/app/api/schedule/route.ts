@@ -103,6 +103,11 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  const scheduleEvents = events.map((event) => ({
+    ...event,
+    readOnly: event.type === "lecture",
+  }));
+
   const assignmentEvents = assignments.map((assignment) => {
     const dueDate = assignment.dueDate!;
     const endTime = dueEventEnd(dueDate, 30 * 60 * 1000);
@@ -116,7 +121,6 @@ export async function GET(req: NextRequest) {
       course: assignment.course,
       courseId: assignment.courseId,
       assignmentId: assignment.id,
-      readOnly: true,
     };
   });
 
@@ -136,7 +140,7 @@ export async function GET(req: NextRequest) {
     };
   });
 
-  return NextResponse.json([...events, ...assignmentEvents, ...examEvents]);
+  return NextResponse.json([...scheduleEvents, ...assignmentEvents, ...examEvents]);
 }
 
 export async function POST(req: NextRequest) {

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { requireUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
-import { formatDate, formatDateTime } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
 import { prioritizeAssignments } from "@/lib/priority/engine";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 
@@ -39,6 +39,7 @@ export default async function DashboardPage() {
     prisma.scheduleEvent.findMany({
       where: {
         userId: user.id,
+        type: { not: "sleep" },
         startTime: { lte: todayEnd },
         endTime: { gte: todayStart },
       },
@@ -120,7 +121,7 @@ export default async function DashboardPage() {
                     </span>
                   </div>
                   <span className="text-zinc-500">
-                    {item.dueDate ? formatDate(item.dueDate) : "—"}
+                    {item.dueDate ? formatDateTime(item.dueDate) : "—"}
                   </span>
                 </li>
               ))}
@@ -141,7 +142,7 @@ export default async function DashboardPage() {
                   {a.title}
                 </span>
                 <span className="text-zinc-500">
-                  {a.dueDate ? formatDate(a.dueDate) : "—"}
+                  {a.dueDate ? formatDateTime(a.dueDate) : "—"}
                 </span>
               </li>
             ))}

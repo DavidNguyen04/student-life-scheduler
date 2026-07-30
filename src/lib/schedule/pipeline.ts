@@ -5,9 +5,10 @@ import { getLectureBusyBlocks } from "@/lib/schedule/lectures";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
 import {
   buildTemplateEventData,
-  DEFAULT_DAILY_TEMPLATES,
   formatTimeValue,
+  parseDailyTemplateSettings,
   TEMPLATE_TITLES,
+  type DailyTemplateSettings,
   type TemplateKey,
 } from "@/lib/schedule/templates";
 
@@ -20,11 +21,12 @@ function countOverlaps(blocks: TimeBlock[], busyBlocks: TimeBlock[]): number {
 
 function chooseMealSlot(
   key: TemplateKey,
+  settings: DailyTemplateSettings,
   busyBlocks: TimeBlock[],
   rangeStart: Date,
   rangeEnd: Date,
 ): { start: string; end: string } {
-  const defaultSlot = DEFAULT_DAILY_TEMPLATES[key];
+  const defaultSlot = settings[key];
   const defaultTemplate = buildTemplateEventData(key, defaultSlot);
   const durationMs =
     defaultTemplate.endTime.getTime() - defaultTemplate.startTime.getTime();
@@ -42,10 +44,10 @@ function chooseMealSlot(
   );
 
   if (countOverlaps(defaultBlocks, busyBlocks) === 0) {
-    return defaultSlot;
+    return { start: defaultSlot.start, end: defaultSlot.end };
   }
 
-  let bestSlot = defaultSlot;
+  let bestSlot = { start: defaultSlot.start, end: defaultSlot.end };
   let minConflicts = countOverlaps(defaultBlocks, busyBlocks);
 
   for (let offsetMinutes = 30; offsetMinutes <= 240; offsetMinutes += 30) {
@@ -76,8 +78,11 @@ function chooseMealSlot(
   return bestSlot;
 }
 
-async function ensureSleepTemplates(userId: string) {
-  const template = buildTemplateEventData("sleep", DEFAULT_DAILY_TEMPLATES.sleep);
+async function ensureSleepTemplate(
+  userId: string,
+  settings: DailyTemplateSettings,
+) {
+  const config = settings.sleep;
   const existing = await prisma.scheduleEvent.findFirst({
     where: {
       userId,
@@ -86,6 +91,14 @@ async function ensureSleepTemplates(userId: string) {
     },
   });
 
+  if (!config.blockTime) {
+    if (existing) {
+      await prisma.scheduleEvent.delete({ where: { id: existing.id } });
+    }
+    return;
+  }
+
+  const template = buildTemplateEventData("sleep", config);
   if (!existing) {
     await prisma.scheduleEvent.create({
       data: { userId, ...template },
@@ -106,6 +119,7 @@ async function ensureSleepTemplates(userId: string) {
 
 async function ensureMealTemplates(
   userId: string,
+  settings: DailyTemplateSettings,
   busyBlocks: TimeBlock[],
   rangeStart: Date,
   rangeEnd: Date,
@@ -113,15 +127,24 @@ async function ensureMealTemplates(
   let mealBusyBlocks = [...busyBlocks];
 
   for (const key of MEAL_KEYS) {
-    const slot = chooseMealSlot(key, mealBusyBlocks, rangeStart, rangeEnd);
-    const template = buildTemplateEventData(key, slot);
+    const config = settings[key];
     const existing = await prisma.scheduleEvent.findFirst({
       where: {
         userId,
-        title: template.title,
+        title: TEMPLATE_TITLES[key],
         recurrenceRule: { not: null },
       },
     });
+
+    if (!config.blockTime) {
+      if (existing) {
+        await prisma.scheduleEvent.delete({ where: { id: existing.id } });
+      }
+      continue;
+    }
+
+    const slot = chooseMealSlot(key, settings, mealBusyBlocks, rangeStart, rangeEnd);
+    const template = buildTemplateEventData(key, slot);
 
     if (existing) {
       await prisma.scheduleEvent.update({
@@ -158,19 +181,28 @@ async function ensureMealTemplates(
 
 /** Apply sleep and meal blocks after lectures are on the calendar. */
 export async function scheduleUserCalendar(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { dailyTemplates: true },
+  });
+  const settings = parseDailyTemplateSettings(user?.dailyTemplates);
+
   const rangeStart = new Date();
   const rangeEnd = addDays(rangeStart, SCHEDULE_HORIZON_DAYS);
   const lectureBlocks = await getLectureBusyBlocks(userId, rangeStart, rangeEnd);
 
-  await ensureSleepTemplates(userId);
+  await ensureSleepTemplate(userId, settings);
 
-  const sleepEvents = await prisma.scheduleEvent.findMany({
-    where: { userId, type: "sleep" },
-  });
+  const sleepEvents = settings.sleep.blockTime
+    ? await prisma.scheduleEvent.findMany({
+        where: { userId, type: "sleep" },
+      })
+    : [];
   const sleepBlocks = expandRecurringEvents(sleepEvents, rangeStart, rangeEnd);
 
   await ensureMealTemplates(
     userId,
+    settings,
     mergeBusyBlocks([...lectureBlocks, ...sleepBlocks]),
     rangeStart,
     rangeEnd,
