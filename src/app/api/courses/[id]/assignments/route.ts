@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { scheduleAssignmentBlock } from "@/lib/schedule/assignment-scheduling";
 import { z } from "zod";
 
 const assignmentSchema = z.object({
@@ -37,18 +36,6 @@ export async function POST(
       source: "manual",
     },
   });
-
-  if (assignment.dueDate) {
-    await scheduleAssignmentBlock(
-      session.user.id,
-      {
-        id: assignment.id,
-        title: assignment.title,
-        dueDate: assignment.dueDate,
-      },
-      courseId,
-    );
-  }
 
   return NextResponse.json(assignment);
 }

@@ -1,9 +1,16 @@
 "use client";
 
-import { Calendar, dateFnsLocalizer, Views, type ToolbarProps } from "react-big-calendar";
+import {
+  Calendar,
+  dateFnsLocalizer,
+  Navigate,
+  Views,
+  type ToolbarProps,
+  type View,
+} from "react-big-calendar";
 import { format, parse, startOfWeek, getDay } from "date-fns";
 import { enUS } from "date-fns/locale";
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
 const locales = { "en-US": enUS };
@@ -26,78 +33,99 @@ export type CalendarEvent = {
     courseName?: string;
     scheduleEventId?: string;
     recurrenceRule?: string | null;
+    readOnly?: boolean;
+    courseId?: string;
+    assignmentId?: string;
+    examId?: string;
   };
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  coursework: "#6366f1",
+  lecture: "#6366f1",
+  assignment: "#ec4899",
+  exam: "#ef4444",
+  coursework: "#818cf8",
   sleep: "#312e81",
   meal: "#f59e0b",
   workout: "#22c55e",
   time_off: "#94a3b8",
-  study_suggestion: "#a855f7",
 };
+
+const VIEW_OPTIONS: View[] = [Views.WEEK, Views.DAY, Views.AGENDA];
+
+function CalendarToolbar(props: ToolbarProps<CalendarEvent>) {
+  return (
+    <div className="rbc-toolbar mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex gap-1">
+        <button
+          type="button"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          onClick={() => props.onNavigate(Navigate.TODAY)}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          onClick={() => props.onNavigate(Navigate.PREVIOUS)}
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          onClick={() => props.onNavigate(Navigate.NEXT)}
+        >
+          Next
+        </button>
+      </div>
+      <span className="text-sm font-medium">{props.label}</span>
+      <div className="flex gap-1">
+        {VIEW_OPTIONS.map((view) => (
+          <button
+            key={view}
+            type="button"
+            className={`rounded border px-2 py-1 text-sm capitalize ${
+              props.view === view
+                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                : "border-zinc-300"
+            }`}
+            onClick={() => props.onView(view)}
+          >
+            {view}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function WeekCalendar({
   events,
   onSelectSlot,
   onSelectEvent,
+  onRangeChange,
 }: {
   events: CalendarEvent[];
   onSelectSlot?: (slot: { start: Date; end: Date }) => void;
   onSelectEvent?: (event: CalendarEvent) => void;
+  onRangeChange?: (range: Date[] | { start: Date; end: Date }, view?: View) => void;
 }) {
-  const { components, formats } = useMemo(
+  const [date, setDate] = useState(() => new Date());
+  const [view, setView] = useState<View>(Views.WEEK);
+
+  const handleNavigate = useCallback((newDate: Date) => {
+    setDate(newDate);
+  }, []);
+
+  const handleView = useCallback((nextView: View) => {
+    setView(nextView);
+  }, []);
+
+  const components = useMemo(() => ({ toolbar: CalendarToolbar }), []);
+  const formats = useMemo(
     () => ({
-      components: {
-        toolbar: (props: ToolbarProps<CalendarEvent>) => (
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex gap-1">
-              <button
-                type="button"
-                className="rounded border border-zinc-300 px-2 py-1 text-sm"
-                onClick={() => props.onNavigate("TODAY")}
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                className="rounded border border-zinc-300 px-2 py-1 text-sm"
-                onClick={() => props.onNavigate("PREV")}
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                className="rounded border border-zinc-300 px-2 py-1 text-sm"
-                onClick={() => props.onNavigate("NEXT")}
-              >
-                Next
-              </button>
-            </div>
-            <span className="text-sm font-medium">{props.label}</span>
-            <div className="flex gap-1">
-              {(["week", "day", "agenda"] as const).map((view) => (
-                <button
-                  key={view}
-                  type="button"
-                  className={`rounded border px-2 py-1 text-sm capitalize ${
-                    props.view === view
-                      ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                      : "border-zinc-300"
-                  }`}
-                  onClick={() => props.onView(view)}
-                >
-                  {view}
-                </button>
-              ))}
-            </div>
-          </div>
-        ),
-      },
-      formats: {
-        timeGutterFormat: (date: Date) => format(date, "ha"),
-      },
+      timeGutterFormat: (value: Date) => format(value, "ha"),
     }),
     [],
   );
@@ -107,8 +135,12 @@ export function WeekCalendar({
       <Calendar
         localizer={localizer}
         events={events}
-        defaultView={Views.WEEK}
-        views={[Views.WEEK, Views.DAY, Views.AGENDA]}
+        date={date}
+        view={view}
+        onNavigate={handleNavigate}
+        onView={handleView}
+        onRangeChange={onRangeChange}
+        views={VIEW_OPTIONS}
         step={30}
         timeslots={2}
         min={new Date(1970, 0, 1, 0, 0, 0)}
@@ -127,8 +159,9 @@ export function WeekCalendar({
               borderColor: color,
               color: "#fff",
               borderRadius: "4px",
-              opacity: type === "sleep" ? 0.92 : 1,
+              opacity: type === "sleep" ? 0.92 : type === "assignment" ? 0.95 : 1,
               fontSize: "0.75rem",
+              borderStyle: type === "assignment" || type === "exam" ? "dashed" : "solid",
             },
           };
         }}

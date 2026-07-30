@@ -1,8 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import type { SyllabusParseResult, ParsedAssignment, ParsedExam } from "@/lib/syllabus/parser";
+import type {
+  SyllabusParseResult,
+  ParsedAssignment,
+  ParsedExam,
+  ParsedLecture,
+} from "@/lib/syllabus/parser";
 import { COURSE_COLORS } from "@/lib/utils";
+
+const WEEKDAY_OPTIONS = [
+  { code: "MO", label: "Mon" },
+  { code: "TU", label: "Tue" },
+  { code: "WE", label: "Wed" },
+  { code: "TH", label: "Thu" },
+  { code: "FR", label: "Fri" },
+  { code: "SA", label: "Sat" },
+  { code: "SU", label: "Sun" },
+];
 
 type Props = {
   initial: SyllabusParseResult & { sourceType: string; fileName?: string };
@@ -16,8 +31,21 @@ type Props = {
     fileName?: string;
     assignments: ParsedAssignment[];
     exams: ParsedExam[];
+    lectures: ParsedLecture[];
   }) => Promise<void>;
 };
+
+function newLecture(): ParsedLecture {
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    title: "Lecture",
+    days: ["MO", "WE", "FR"],
+    startTime: "10:00",
+    endTime: "11:15",
+    location: null,
+    accepted: true,
+  };
+}
 
 export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
   const [courseName, setCourseName] = useState(
@@ -27,6 +55,7 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
   const [color, setColor] = useState(COURSE_COLORS[0]);
   const [assignments, setAssignments] = useState(initial.assignments);
   const [exams, setExams] = useState(initial.exams);
+  const [lectures, setLectures] = useState(initial.lectures ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -48,11 +77,24 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
         fileName: initial.fileName,
         assignments,
         exams,
+        lectures,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
       setLoading(false);
     }
+  }
+
+  function toggleLectureDay(lectureId: string, dayCode: string) {
+    setLectures((prev) =>
+      prev.map((lecture) => {
+        if (lecture.id !== lectureId) return lecture;
+        const days = lecture.days.includes(dayCode)
+          ? lecture.days.filter((day) => day !== dayCode)
+          : [...lecture.days, dayCode];
+        return { ...lecture, days };
+      }),
+    );
   }
 
   return (
@@ -92,6 +134,108 @@ export function SyllabusReviewForm({ initial, rawContent, onConfirm }: Props) {
           ))}
         </div>
       </label>
+
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="font-medium">Lectures ({lectures.length})</h3>
+          <button
+            type="button"
+            onClick={() => setLectures((prev) => [...prev, newLecture()])}
+            className="text-sm text-indigo-600 hover:text-indigo-700"
+          >
+            Add lecture
+          </button>
+        </div>
+        <div className="space-y-2">
+          {lectures.map((lecture) => (
+            <div key={lecture.id} className="rounded border border-zinc-200 p-3">
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={lecture.accepted}
+                  onChange={(e) =>
+                    setLectures((prev) =>
+                      prev.map((item) =>
+                        item.id === lecture.id
+                          ? { ...item, accepted: e.target.checked }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <input
+                  value={lecture.title}
+                  onChange={(e) =>
+                    setLectures((prev) =>
+                      prev.map((item) =>
+                        item.id === lecture.id ? { ...item, title: e.target.value } : item,
+                      ),
+                    )
+                  }
+                  className="flex-1 rounded border border-zinc-200 px-2 py-1 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLectures((prev) => prev.filter((item) => item.id !== lecture.id))
+                  }
+                  className="text-sm text-red-600"
+                >
+                  Remove
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {WEEKDAY_OPTIONS.map((day) => (
+                  <label key={day.code} className="flex items-center gap-1 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={lecture.days.includes(day.code)}
+                      onChange={() => toggleLectureDay(lecture.id, day.code)}
+                    />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="time"
+                  value={lecture.startTime}
+                  onChange={(e) =>
+                    setLectures((prev) =>
+                      prev.map((item) =>
+                        item.id === lecture.id
+                          ? { ...item, startTime: e.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  className="rounded border border-zinc-200 px-2 py-1 text-sm"
+                />
+                <span className="text-zinc-400">to</span>
+                <input
+                  type="time"
+                  value={lecture.endTime}
+                  onChange={(e) =>
+                    setLectures((prev) =>
+                      prev.map((item) =>
+                        item.id === lecture.id
+                          ? { ...item, endTime: e.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  className="rounded border border-zinc-200 px-2 py-1 text-sm"
+                />
+              </div>
+            </div>
+          ))}
+          {lectures.length === 0 && (
+            <p className="text-sm text-zinc-500">
+              No lecture times detected. Add them manually or edit after course creation.
+            </p>
+          )}
+        </div>
+      </section>
 
       <section>
         <h3 className="mb-2 font-medium">Assignments ({assignments.length})</h3>
