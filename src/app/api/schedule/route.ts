@@ -255,5 +255,10 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  if (action === "schedule-coursework") {
+    const scheduled = await scheduleCourseworkBlocks(session.user.id);
+    return NextResponse.json({ ok: true, scheduledCount: scheduled.length });
+  }
+
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }

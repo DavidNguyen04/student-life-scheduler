@@ -247,11 +247,19 @@ export default function CalendarPage() {
   );
 
   useEffect(() => {
-    loadEvents();
-    fetch("/api/courses")
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: CourseLegendItem[]) => setCourses(data))
-      .catch(() => setCourses([]));
+    async function initCalendar() {
+      try {
+        await fetch("/api/schedule?action=schedule-coursework", { method: "PATCH" });
+      } catch {
+        // Scheduling is best-effort; still load whatever is in the DB.
+      }
+      await loadEvents();
+      fetch("/api/courses")
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data: CourseLegendItem[]) => setCourses(data))
+        .catch(() => setCourses([]));
+    }
+    void initCalendar();
   }, [loadEvents]);
 
   function openNewEventForm(slot?: { start: Date; end: Date }) {
