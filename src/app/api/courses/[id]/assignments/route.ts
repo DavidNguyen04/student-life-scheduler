@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { scheduleCourseworkForAssignment } from "@/lib/schedule/coursework-scheduling";
 import { z } from "zod";
 
 const assignmentSchema = z.object({
@@ -43,6 +44,14 @@ export async function POST(
     },
   });
 
+  if (assignment.dueDate) {
+    try {
+      await scheduleCourseworkForAssignment(session.user.id, assignment.id);
+    } catch (scheduleError) {
+      console.error("Coursework scheduling failed after assignment create:", scheduleError);
+    }
+  }
+
   return NextResponse.json(assignment);
 }
 
@@ -84,6 +93,14 @@ export async function PATCH(
   const updated = await prisma.assignment.findFirst({
     where: { id: assignmentId, courseId },
   });
+
+  if (updated) {
+    try {
+      await scheduleCourseworkForAssignment(session.user.id, updated.id);
+    } catch (scheduleError) {
+      console.error("Coursework scheduling failed after assignment update:", scheduleError);
+    }
+  }
 
   return NextResponse.json(updated);
 }
