@@ -2,8 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { endOfDay } from "date-fns";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { z } from "zod";
+import { scheduleCourseworkBlocks } from "@/lib/schedule/coursework-scheduling";
 import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
+import { z } from "zod";
+
+const COURSEWORK_RESCHEDULE_TYPES = new Set(["workout", "time_off"]);
+
+async function maybeRescheduleCoursework(userId: string, eventType: string) {
+  if (!COURSEWORK_RESCHEDULE_TYPES.has(eventType)) return;
+  try {
+    await scheduleCourseworkBlocks(userId);
+  } catch (scheduleError) {
+    console.error("Coursework scheduling failed after blocking event change:", scheduleError);
+  }
+}
 
 /** Cap due-event end at end-of-day so a 30-min window after 11:59 PM doesn't cross midnight. */
 function dueEventEnd(dueDate: Date, durationMs: number): Date {
@@ -69,7 +81,6 @@ export async function GET(req: NextRequest) {
       where: {
         course: { userId: session.user.id },
         dueDate: { not: null },
-        scheduleEvent: null,
         ...(rangeFilter
           ? {
               dueDate: {
@@ -163,6 +174,8 @@ export async function POST(req: NextRequest) {
     include: { course: true },
   });
 
+  await maybeRescheduleCoursework(session.user.id, event.type);
+
   return NextResponse.json(event);
 }
 
@@ -177,9 +190,18 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
+  const existing = await prisma.scheduleEvent.findFirst({
+    where: { id, userId: session.user.id },
+    select: { type: true },
+  });
+
   await prisma.scheduleEvent.deleteMany({
     where: { id, userId: session.user.id },
   });
+
+  if (existing) {
+    await maybeRescheduleCoursework(session.user.id, existing.type);
+  }
 
   return NextResponse.json({ ok: true });
 }
@@ -192,6 +214,11 @@ export async function PUT(req: NextRequest) {
 
   const body = createSchema.extend({ id: z.string() }).parse(await req.json());
 
+  const existing = await prisma.scheduleEvent.findFirst({
+    where: { id: body.id, userId: session.user.id },
+    select: { courseId: true, type: true },
+  });
+
   await prisma.scheduleEvent.updateMany({
     where: { id: body.id, userId: session.user.id },
     data: {
@@ -199,7 +226,7 @@ export async function PUT(req: NextRequest) {
       type: body.type,
       startTime: new Date(body.startTime),
       endTime: new Date(body.endTime),
-      courseId: body.courseId ?? null,
+      courseId: body.courseId !== undefined ? body.courseId : existing?.courseId ?? null,
       recurrenceRule: body.recurrenceRule ?? null,
     },
   });
@@ -208,6 +235,10 @@ export async function PUT(req: NextRequest) {
     where: { id: body.id },
     include: { course: true },
   });
+
+  if (updated) {
+    await maybeRescheduleCoursework(session.user.id, updated.type);
+  }
 
   return NextResponse.json(updated);
 }

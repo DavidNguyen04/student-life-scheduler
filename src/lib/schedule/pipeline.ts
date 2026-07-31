@@ -11,6 +11,7 @@ import {
   type DailyTemplateSettings,
   type TemplateKey,
 } from "@/lib/schedule/templates";
+import { scheduleCourseworkBlocks } from "@/lib/schedule/coursework-scheduling";
 
 const MEAL_KEYS: TemplateKey[] = ["breakfast", "lunch", "dinner"];
 const SCHEDULE_HORIZON_DAYS = 14;
@@ -207,4 +208,6 @@ export async function scheduleUserCalendar(userId: string) {
     rangeStart,
     rangeEnd,
   );
+
+  await scheduleCourseworkBlocks(userId);
 }

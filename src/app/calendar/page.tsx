@@ -55,6 +55,19 @@ type EventForm = {
   recurring: boolean;
 };
 
+type CourseLegendItem = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+const NON_COURSE_LEGEND: Record<string, string> = {
+  sleep: "#312e81",
+  meal: "#f59e0b",
+  workout: "#22c55e",
+  time_off: "#94a3b8",
+};
+
 const EMPTY_FORM: EventForm = {
   scheduleEventId: null,
   assignmentId: null,
@@ -195,6 +208,7 @@ function formFromAssignmentRow(row: ScheduleEventRow): EventForm {
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [scheduleRows, setScheduleRows] = useState<ScheduleEventRow[]>([]);
+  const [courses, setCourses] = useState<CourseLegendItem[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -234,6 +248,10 @@ export default function CalendarPage() {
 
   useEffect(() => {
     loadEvents();
+    fetch("/api/courses")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: CourseLegendItem[]) => setCourses(data))
+      .catch(() => setCourses([]));
   }, [loadEvents]);
 
   function openNewEventForm(slot?: { start: Date; end: Date }) {
@@ -260,9 +278,10 @@ export default function CalendarPage() {
       return;
     }
 
-    if (event.resource?.assignmentId) {
+    if (event.resource?.assignmentId && event.resource?.type === "assignment") {
       const row = scheduleRows.find(
-        (item) => item.assignmentId === event.resource!.assignmentId,
+        (item) =>
+          item.assignmentId === event.resource!.assignmentId && item.type === "assignment",
       );
       if (!row) {
         setError("Could not load assignment for editing");
@@ -370,6 +389,7 @@ export default function CalendarPage() {
       startTime: start.toISOString(),
       endTime: end.toISOString(),
       recurrenceRule,
+      courseId: form.courseId,
     };
 
     const res = form.scheduleEventId
@@ -472,19 +492,16 @@ export default function CalendarPage() {
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs">
-        {Object.entries({
-          lecture: "#6366f1",
-          assignment: "#ec4899",
-          exam: "#ef4444",
-          sleep: "#312e81",
-          meal: "#f59e0b",
-          workout: "#22c55e",
-          time_off: "#94a3b8",
-          coursework: "#818cf8",
-        }).map(([type, color]) => (
+        {Object.entries(NON_COURSE_LEGEND).map(([type, color]) => (
           <span key={type} className="flex items-center gap-1">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
             {type.replace("_", " ")}
+          </span>
+        ))}
+        {courses.map((course) => (
+          <span key={course.id} className="flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: course.color }} />
+            {course.name}
           </span>
         ))}
       </div>

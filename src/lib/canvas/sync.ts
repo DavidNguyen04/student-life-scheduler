@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { CanvasClient } from "@/lib/canvas/client";
 import { decryptToken } from "@/lib/canvas/crypto";
+import { scheduleCourseworkBlocks } from "@/lib/schedule/coursework-scheduling";
 import { parseSyllabusText } from "@/lib/syllabus/parser";
 import { nextCourseColor } from "@/lib/utils";
 
@@ -154,6 +155,12 @@ export async function syncCanvasForUser(userId: string) {
       details: { courseIds: syncedCourseIds },
     },
   });
+
+  try {
+    await scheduleCourseworkBlocks(userId);
+  } catch (scheduleError) {
+    console.error("Coursework scheduling failed after Canvas sync:", scheduleError);
+  }
 
   return { courseCount: syncedCourseIds.length };
 }
