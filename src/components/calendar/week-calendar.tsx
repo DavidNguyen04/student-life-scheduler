@@ -47,7 +47,7 @@ const TYPE_COLORS: Record<string, string> = {
   coursework: "#818cf8",
   sleep: "#312e81",
   meal: "#f59e0b",
-  workout: "#166534",
+  workout: "#ff8400",
   time_off: "#94a3b8",
 };
 
@@ -102,11 +102,13 @@ function CalendarToolbar(props: ToolbarProps<CalendarEvent>) {
 
 export function WeekCalendar({
   events,
+  typeColors,
   onSelectSlot,
   onSelectEvent,
   onRangeChange,
 }: {
   events: CalendarEvent[];
+  typeColors?: Record<string, string>;
   onSelectSlot?: (slot: { start: Date; end: Date }) => void;
   onSelectEvent?: (event: CalendarEvent) => void;
   onRangeChange?: (range: Date[] | { start: Date; end: Date }, view?: View) => void;
@@ -128,6 +130,11 @@ export function WeekCalendar({
       timeGutterFormat: (value: Date) => format(value, "ha"),
     }),
     [],
+  );
+
+  const resolvedTypeColors = useMemo(
+    () => ({ ...TYPE_COLORS, ...typeColors }),
+    [typeColors],
   );
 
   return (
@@ -152,7 +159,7 @@ export function WeekCalendar({
         onSelectEvent={onSelectEvent}
         eventPropGetter={(event) => {
           const type = event.resource?.type ?? "coursework";
-          const color = event.resource?.color ?? TYPE_COLORS[type] ?? "#6366f1";
+          const color = event.resource?.color ?? resolvedTypeColors[type] ?? "#6366f1";
           return {
             style: {
               backgroundColor: color,
