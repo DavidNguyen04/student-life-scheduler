@@ -7,6 +7,7 @@ import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
 import { z } from "zod";
 
 const COURSEWORK_RESCHEDULE_TYPES = new Set(["workout", "time_off"]);
+const COMPLETED_ASSIGNMENT_COLOR = "#22c55e";
 
 async function maybeRescheduleCoursework(userId: string, eventType: string) {
   if (!COURSEWORK_RESCHEDULE_TYPES.has(eventType)) return;
@@ -74,6 +75,7 @@ export async function GET(req: NextRequest) {
       },
       include: {
         course: { select: { id: true, name: true, color: true } },
+        assignment: { select: { submitted: true } },
       },
       orderBy: { startTime: "asc" },
     }),
@@ -114,10 +116,13 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  const scheduleEvents = events.map((event) => ({
-    ...event,
-    readOnly: event.type === "lecture",
-  }));
+  const scheduleEvents = events
+    .filter((event) => !(event.type === "coursework" && event.assignment?.submitted))
+    .map((event) => ({
+      ...event,
+      readOnly: event.type === "lecture",
+      submitted: event.assignment?.submitted,
+    }));
 
   const assignmentEvents = assignments.map((assignment) => {
     const dueDate = assignment.dueDate!;
@@ -132,6 +137,8 @@ export async function GET(req: NextRequest) {
       course: assignment.course,
       courseId: assignment.courseId,
       assignmentId: assignment.id,
+      submitted: assignment.submitted,
+      color: assignment.submitted ? COMPLETED_ASSIGNMENT_COLOR : assignment.course.color,
     };
   });
 

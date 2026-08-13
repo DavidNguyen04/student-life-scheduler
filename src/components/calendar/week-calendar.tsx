@@ -47,7 +47,7 @@ const TYPE_COLORS: Record<string, string> = {
   coursework: "#818cf8",
   sleep: "#312e81",
   meal: "#f59e0b",
-  workout: "#22c55e",
+  workout: "#166534",
   time_off: "#94a3b8",
 };
 
