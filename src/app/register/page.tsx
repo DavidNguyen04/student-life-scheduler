@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ThemeToggle } from "@/components/theme-toggle";
+
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -28,7 +30,10 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="relative flex min-h-screen items-center justify-center px-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-semibold">Create account</h1>
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">

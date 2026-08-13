@@ -59,21 +59,21 @@ function CalendarToolbar(props: ToolbarProps<CalendarEvent>) {
       <div className="flex gap-1">
         <button
           type="button"
-          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-600"
           onClick={() => props.onNavigate(Navigate.TODAY)}
         >
           Today
         </button>
         <button
           type="button"
-          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-600"
           onClick={() => props.onNavigate(Navigate.PREVIOUS)}
         >
           Back
         </button>
         <button
           type="button"
-          className="rounded border border-zinc-300 px-2 py-1 text-sm"
+          className="rounded border border-zinc-300 px-2 py-1 text-sm dark:border-zinc-600"
           onClick={() => props.onNavigate(Navigate.NEXT)}
         >
           Next
@@ -87,8 +87,8 @@ function CalendarToolbar(props: ToolbarProps<CalendarEvent>) {
             type="button"
             className={`rounded border px-2 py-1 text-sm capitalize ${
               props.view === view
-                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
-                : "border-zinc-300"
+                ? "border-indigo-600 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-950 dark:text-indigo-300"
+                : "border-zinc-300 dark:border-zinc-600"
             }`}
             onClick={() => props.onView(view)}
           >
@@ -138,7 +138,7 @@ export function WeekCalendar({
   );
 
   return (
-    <div className="h-[600px] rounded-lg border border-zinc-200 bg-white p-2">
+    <div className="h-[600px] rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900">
       <Calendar
         localizer={localizer}
         events={events}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { NavMenu } from "@/components/nav-menu";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
@@ -15,9 +15,9 @@ export function Nav() {
   const pathname = usePathname();
 
   return (
-    <header className="border-b border-zinc-200 bg-white">
+    <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <Link href="/dashboard" className="text-lg font-semibold text-indigo-600">
+        <Link href="/dashboard" className="text-lg font-semibold text-indigo-600 dark:text-indigo-400">
           Student Life Scheduler
         </Link>
         <nav className="flex items-center gap-4">
@@ -27,19 +27,14 @@ export function Nav() {
               href={link.href}
               className={`text-sm font-medium ${
                 pathname.startsWith(link.href)
-                  ? "text-indigo-600"
-                  : "text-zinc-600 hover:text-zinc-900"
+                  ? "text-indigo-600 dark:text-indigo-400"
+                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               }`}
             >
               {link.label}
             </Link>
           ))}
-          <button
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            className="text-sm text-zinc-500 hover:text-zinc-800"
-          >
-            Sign out
-          </button>
+          <NavMenu />
         </nav>
       </div>
     </header>

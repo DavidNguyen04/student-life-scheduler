@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ThemeToggle } from "@/components/theme-toggle";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -27,7 +29,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="relative flex min-h-screen items-center justify-center px-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-semibold">Sign in</h1>
         <p className="mt-1 text-sm text-zinc-500">
