@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
 import { DailyTemplatesModal } from "@/components/calendar/daily-templates-modal";
+import { LegendEditModal } from "@/components/calendar/legend-edit-modal";
 import { addDays, endOfDay, format, startOfDay, startOfWeek } from "date-fns";
 import type { View } from "react-big-calendar";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
@@ -18,6 +19,13 @@ import {
   formatTimeValue,
   isTemplateTitle,
 } from "@/lib/schedule/templates";
+import {
+  DEFAULT_LEGEND_ENTRIES,
+  legendTypeColors,
+  parseCalendarLegend,
+  type CalendarLegendSettings,
+  type LegendEventType,
+} from "@/lib/schedule/legend";
 
 const EVENT_TYPES = [
   { value: "lecture", label: "Lecture" },
@@ -65,12 +73,9 @@ type CourseLegendItem = {
 
 const COMPLETED_ASSIGNMENT_COLOR = "#22c55e";
 
-const NON_COURSE_LEGEND: Record<string, string> = {
-  sleep: "#312e81",
-  meal: "#f59e0b",
-  workout: "#166534",
-  time_off: "#94a3b8",
-};
+type LegendEditTarget =
+  | { kind: "course"; id: string; name: string; color: string }
+  | { kind: "event-type"; type: LegendEventType; label: string; color: string };
 
 const EMPTY_FORM: EventForm = {
   scheduleEventId: null,
@@ -239,6 +244,14 @@ export default function CalendarPage() {
   const [addBlockDurationMinutes, setAddBlockDurationMinutes] = useState(60);
   const [addBlockError, setAddBlockError] = useState("");
   const [addingBlock, setAddingBlock] = useState(false);
+  const [legend, setLegend] = useState<CalendarLegendSettings>(() =>
+    parseCalendarLegend(null),
+  );
+  const [legendEditTarget, setLegendEditTarget] = useState<LegendEditTarget | null>(
+    null,
+  );
+  const [legendSaving, setLegendSaving] = useState(false);
+  const [legendError, setLegendError] = useState("");
   const calendarRangeRef = useRef({
     start: startOfWeek(new Date(), { weekStartsOn: 0 }),
     end: endOfDay(addDays(startOfWeek(new Date(), { weekStartsOn: 0 }), 14)),
@@ -278,10 +291,18 @@ export default function CalendarPage() {
         // Scheduling is best-effort; still load whatever is in the DB.
       }
       await loadEvents();
-      fetch("/api/courses")
-        .then((res) => (res.ok ? res.json() : []))
-        .then((data: CourseLegendItem[]) => setCourses(data))
-        .catch(() => setCourses([]));
+      await Promise.all([
+        fetch("/api/courses")
+          .then((res) => (res.ok ? res.json() : []))
+          .then((data: CourseLegendItem[]) => setCourses(data))
+          .catch(() => setCourses([])),
+        fetch("/api/schedule/legend")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data) setLegend(parseCalendarLegend(data));
+          })
+          .catch(() => setLegend(parseCalendarLegend(null))),
+      ]);
     }
     void initCalendar();
   }, [loadEvents]);
@@ -416,6 +437,62 @@ export default function CalendarPage() {
   function openTemplatesModal() {
     setError("");
     setShowTemplatesModal(true);
+  }
+
+  async function saveLegendEdit(name: string, color: string) {
+    if (!legendEditTarget) return;
+
+    setLegendSaving(true);
+    setLegendError("");
+
+    if (legendEditTarget.kind === "course") {
+      const res = await fetch(`/api/courses/${legendEditTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, color }),
+      });
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setLegendError(data.error ?? "Failed to save course");
+        setLegendSaving(false);
+        return;
+      }
+
+      const updated = (await res.json()) as CourseLegendItem;
+      setCourses((current) =>
+        current.map((course) =>
+          course.id === updated.id
+            ? { ...course, name: updated.name, color: updated.color }
+            : course,
+        ),
+      );
+    } else {
+      const res = await fetch("/api/schedule/legend", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: legendEditTarget.type,
+          label: name,
+          color,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setLegendError(data.error ?? "Failed to save legend");
+        setLegendSaving(false);
+        return;
+      }
+
+      const updated = parseCalendarLegend(await res.json());
+      setLegend(updated);
+    }
+
+    setLegendSaving(false);
+    setLegendEditTarget(null);
+    setLegendError("");
+    await loadEvents();
   }
 
   async function saveEvent(e: React.FormEvent) {
@@ -607,23 +684,54 @@ export default function CalendarPage() {
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
       <div className="mt-4 flex flex-wrap gap-3 text-xs">
-        {Object.entries(NON_COURSE_LEGEND).map(([type, color]) => (
-          <span key={type} className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-            {type.replace("_", " ")}
-          </span>
+        {(Object.keys(DEFAULT_LEGEND_ENTRIES) as LegendEventType[]).map((type) => (
+          <button
+            key={type}
+            type="button"
+            onClick={() =>
+              setLegendEditTarget({
+                kind: "event-type",
+                type,
+                label: legend[type].label,
+                color: legend[type].color,
+              })
+            }
+            className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-zinc-100"
+          >
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: legend[type].color }}
+            />
+            {legend[type].label}
+          </button>
         ))}
         {courses.map((course) => (
-          <span key={course.id} className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: course.color }} />
+          <button
+            key={course.id}
+            type="button"
+            onClick={() =>
+              setLegendEditTarget({
+                kind: "course",
+                id: course.id,
+                name: course.name,
+                color: course.color,
+              })
+            }
+            className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-zinc-100"
+          >
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: course.color }}
+            />
             {course.name}
-          </span>
+          </button>
         ))}
       </div>
 
       <div className="mt-4">
         <WeekCalendar
           events={events}
+          typeColors={legendTypeColors(legend)}
           onRangeChange={handleRangeChange}
           onSelectSlot={(slot) => openNewEventForm(slot)}
           onSelectEvent={openEditEventForm}
@@ -634,6 +742,30 @@ export default function CalendarPage() {
         open={showTemplatesModal}
         onClose={() => setShowTemplatesModal(false)}
         onSaved={handleTemplatesSaved}
+      />
+
+      <LegendEditModal
+        open={legendEditTarget != null}
+        title={
+          legendEditTarget?.kind === "course"
+            ? "Edit course"
+            : legendEditTarget
+              ? `Edit ${legend[legendEditTarget.type].label}`
+              : "Edit legend"
+        }
+        name={
+          legendEditTarget?.kind === "course"
+            ? legendEditTarget.name
+            : (legendEditTarget?.label ?? "")
+        }
+        color={legendEditTarget?.color ?? "#6366f1"}
+        saving={legendSaving}
+        error={legendError}
+        onClose={() => {
+          setLegendEditTarget(null);
+          setLegendError("");
+        }}
+        onSave={(name, color) => void saveLegendEdit(name, color)}
       />
 
       {readOnlyEvent && (
