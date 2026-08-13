@@ -137,7 +137,7 @@ model Assignment {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   course           Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  scheduleEvent    ScheduleEvent?
+  scheduleEvents   ScheduleEvent[]
 
   @@index([courseId])
   @@index([dueDate])
@@ -163,13 +163,14 @@ model ScheduleEvent {
   id             String            @id @default(cuid())
   userId         String
   courseId       String?
-  assignmentId   String?           @unique
+  assignmentId   String?
   title          String
   type           ScheduleEventType
   startTime      DateTime
   endTime        DateTime
   recurrenceRule String?
   isSuggested    Boolean           @default(false)
+  isAutoScheduled Boolean          @default(false)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -178,6 +179,7 @@ model ScheduleEvent {
 
   @@index([userId])
   @@index([startTime])
+  @@index([assignmentId])
 }
 
 model CanvasConnection {

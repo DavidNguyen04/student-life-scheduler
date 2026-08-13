@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { blocksInRange, mergeBusyBlocks, overlaps, type TimeBlock } from "@/lib/schedule/blocks";
 import { getLectureBusyBlocks } from "@/lib/schedule/lectures";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
-import { findFirstNonConflictingSlot } from "@/lib/schedule/slots";
+import { findFirstNonConflictingSlot, findManualCourseworkSlot } from "@/lib/schedule/slots";
 import {
   buildTemplateEventData,
   parseDailyTemplateSettings,
@@ -49,11 +49,11 @@ function getTemplateBusyBlocks(
   return blocks;
 }
 
-async function getSchedulingBusyBlocks(
+export async function getSchedulingBusyBlocks(
   userId: string,
   rangeStart: Date,
   rangeEnd: Date,
-  excludeAssignmentId?: string,
+  excludeEventId?: string,
 ): Promise<TimeBlock[]> {
   // Expand from the prior day so overnight sleep/meals are included in the window.
   const expandFrom = startOfDay(addDays(rangeStart, -1));
@@ -63,16 +63,7 @@ async function getSchedulingBusyBlocks(
     prisma.scheduleEvent.findMany({
       where: {
         userId,
-        ...(excludeAssignmentId
-          ? {
-              NOT: {
-                AND: [
-                  { assignmentId: { not: null } },
-                  { assignmentId: excludeAssignmentId },
-                ],
-              },
-            }
-          : {}),
+        ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
         OR: [
           { type: { in: [...BLOCKING_EVENT_TYPES] }, recurrenceRule: { not: null } },
           {
@@ -135,9 +126,9 @@ function existingBlockIsValid(
   );
 }
 
-async function deleteLinkedCoursework(userId: string, assignmentId: string) {
+async function deleteAutoScheduledCoursework(userId: string, assignmentId: string) {
   await prisma.scheduleEvent.deleteMany({
-    where: { userId, assignmentId, type: "coursework" },
+    where: { userId, assignmentId, type: "coursework", isAutoScheduled: true },
   });
 }
 
@@ -152,7 +143,10 @@ export async function scheduleCourseworkBlocks(
       dueDate: { gte: now },
       submitted: false,
     },
-    include: { scheduleEvent: true, course: true },
+    include: {
+      scheduleEvents: { where: { type: "coursework", isAutoScheduled: true } },
+      course: true,
+    },
     orderBy: { dueDate: "asc" },
   });
 
@@ -183,10 +177,15 @@ export async function scheduleCourseworkBlocks(
   for (const assignment of assignments) {
     const dueDate = assignment.dueDate!;
     const windowStart = courseworkWindowStart(dueDate, now);
-    const baseBusy = await getSchedulingBusyBlocks(userId, windowStart, dueDate, assignment.id);
+    const existing = assignment.scheduleEvents[0] ?? null;
+    const baseBusy = await getSchedulingBusyBlocks(
+      userId,
+      windowStart,
+      dueDate,
+      existing?.id,
+    );
     const busyBlocks = mergeBusyBlocks([...baseBusy, ...placedBusyBlocks]);
 
-    const existing = assignment.scheduleEvent;
     const existingBlock = existing
       ? { start: existing.startTime, end: existing.endTime }
       : null;
@@ -206,7 +205,7 @@ export async function scheduleCourseworkBlocks(
 
     if (!slot || slot.end.getTime() > dueDate.getTime()) {
       if (existing) {
-        await deleteLinkedCoursework(userId, assignment.id);
+        await deleteAutoScheduledCoursework(userId, assignment.id);
       }
       continue;
     }
@@ -219,6 +218,7 @@ export async function scheduleCourseworkBlocks(
           startTime: slot.start,
           endTime: slot.end,
           courseId: assignment.courseId,
+          isAutoScheduled: true,
         },
       });
       scheduled.push(existing.id);
@@ -232,6 +232,7 @@ export async function scheduleCourseworkBlocks(
           type: "coursework",
           startTime: slot.start,
           endTime: slot.end,
+          isAutoScheduled: true,
         },
       });
       scheduled.push(event.id);
@@ -250,4 +251,124 @@ export async function scheduleCourseworkForAssignment(
   now = new Date(),
 ): Promise<string[]> {
   return scheduleCourseworkBlocks(userId, now);
+}
+
+function parseScheduleDate(value: string): Date | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+/** Create a manual coursework block on a chosen day. */
+export async function addManualCourseworkBlock(
+  userId: string,
+  params: {
+    referenceEventId?: string;
+    assignmentId?: string;
+    scheduleDate: string;
+    durationMinutes: number;
+  },
+  now = new Date(),
+) {
+  if (!params.referenceEventId && !params.assignmentId) {
+    return { error: "referenceEventId or assignmentId required", status: 400 as const };
+  }
+
+  let assignmentId: string;
+  let courseId: string | null;
+  let title: string;
+  let dueDate: Date;
+
+  if (params.referenceEventId) {
+    const reference = await prisma.scheduleEvent.findFirst({
+      where: {
+        id: params.referenceEventId,
+        userId,
+        type: "coursework",
+        assignmentId: { not: null },
+      },
+      include: {
+        assignment: { include: { course: true } },
+      },
+    });
+
+    if (!reference?.assignment?.dueDate) {
+      return { error: "Reference coursework block not found", status: 404 as const };
+    }
+
+    assignmentId = reference.assignmentId!;
+    courseId = reference.courseId ?? reference.assignment.courseId;
+    title = reference.assignment.title;
+    dueDate = reference.assignment.dueDate;
+  } else {
+    const assignment = await prisma.assignment.findFirst({
+      where: {
+        id: params.assignmentId,
+        course: { userId },
+        dueDate: { not: null },
+      },
+      include: { course: true },
+    });
+
+    if (!assignment?.dueDate) {
+      return { error: "Assignment not found", status: 404 as const };
+    }
+
+    assignmentId = assignment.id;
+    courseId = assignment.courseId;
+    title = assignment.title;
+    dueDate = assignment.dueDate;
+  }
+
+  const scheduleDate = parseScheduleDate(params.scheduleDate);
+  if (!scheduleDate) {
+    return { error: "Invalid schedule date", status: 400 as const };
+  }
+
+  const dayStart = startOfDay(scheduleDate);
+  const todayStart = startOfDay(now);
+
+  if (dayStart.getTime() < todayStart.getTime()) {
+    return { error: "Schedule date cannot be in the past", status: 400 as const };
+  }
+
+  if (dayStart.getTime() > startOfDay(dueDate).getTime()) {
+    return { error: "Schedule date cannot be after the assignment due date", status: 400 as const };
+  }
+
+  const durationMs = params.durationMinutes * 60 * 1000;
+
+  const busyBlocks = await getSchedulingBusyBlocks(
+    userId,
+    dayStart,
+    dueDate,
+  );
+
+  const slot = findManualCourseworkSlot({
+    scheduleDate,
+    durationMs,
+    dueDate,
+    busyBlocks,
+    now,
+  });
+
+  if (!slot) {
+    return { error: "No available slot found on the chosen day", status: 409 as const };
+  }
+
+  const event = await prisma.scheduleEvent.create({
+    data: {
+      userId,
+      courseId,
+      assignmentId,
+      title,
+      type: "coursework",
+      startTime: slot.start,
+      endTime: slot.end,
+      isAutoScheduled: false,
+    },
+    include: { course: true },
+  });
+
+  return { event, status: 201 as const };
 }

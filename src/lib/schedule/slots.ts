@@ -1,3 +1,4 @@
+import { endOfDay, startOfDay } from "date-fns";
 import { mergeBusyBlocks, overlaps, type TimeBlock } from "@/lib/schedule/blocks";
 
 export function findFirstAvailableSlot(
@@ -38,4 +39,37 @@ export function findFirstNonConflictingSlot(
   }
 
   return null;
+}
+
+/** Forward-only slot search for a user-added coursework block on a chosen day. */
+export function findManualCourseworkSlot(params: {
+  scheduleDate: Date;
+  durationMs: number;
+  dueDate: Date;
+  busyBlocks: TimeBlock[];
+  now?: Date;
+}): TimeBlock | null {
+  const now = params.now ?? new Date();
+  const dayStart = startOfDay(params.scheduleDate);
+  const todayStart = startOfDay(now);
+
+  if (dayStart.getTime() < todayStart.getTime()) {
+    return null;
+  }
+
+  const windowStart = new Date(Math.max(dayStart.getTime(), now.getTime()));
+  const windowEnd = new Date(
+    Math.min(endOfDay(params.scheduleDate).getTime(), params.dueDate.getTime()),
+  );
+
+  if (windowStart.getTime() >= windowEnd.getTime()) {
+    return null;
+  }
+
+  return findFirstNonConflictingSlot(
+    params.busyBlocks,
+    windowStart,
+    windowEnd,
+    params.durationMs,
+  );
 }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { WeekCalendar, type CalendarEvent } from "@/components/calendar/week-calendar";
 import { DailyTemplatesModal } from "@/components/calendar/daily-templates-modal";
-import { addDays, endOfDay, startOfDay, startOfWeek } from "date-fns";
+import { addDays, endOfDay, format, startOfDay, startOfWeek } from "date-fns";
 import type { View } from "react-big-calendar";
 import { expandRecurringEvents } from "@/lib/schedule/recurrence";
 import { blocksInRange, splitBlockAtMidnight } from "@/lib/schedule/blocks";
@@ -177,7 +177,7 @@ function formFromRow(row: ScheduleEventRow): EventForm {
   const end = new Date(row.endTime);
   return {
     scheduleEventId: row.id,
-    assignmentId: null,
+    assignmentId: row.type === "coursework" ? (row.assignmentId ?? null) : null,
     courseId: row.courseId ?? row.course?.id ?? null,
     title: row.title,
     type: row.type,
@@ -187,6 +187,10 @@ function formFromRow(row: ScheduleEventRow): EventForm {
     endTimeOnly: formatTimeValue(end),
     recurring: Boolean(row.recurrenceRule),
   };
+}
+
+function toDateInputValue(date: Date): string {
+  return format(date, "yyyy-MM-dd");
 }
 
 function formFromAssignmentRow(row: ScheduleEventRow): EventForm {
@@ -205,6 +209,14 @@ function formFromAssignmentRow(row: ScheduleEventRow): EventForm {
   };
 }
 
+function resetAddBlockForm(defaultDate = new Date()) {
+  return {
+    date: toDateInputValue(defaultDate),
+    durationMinutes: 60,
+    error: "",
+  };
+}
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [scheduleRows, setScheduleRows] = useState<ScheduleEventRow[]>([]);
@@ -215,6 +227,10 @@ export default function CalendarPage() {
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
   const [readOnlyEvent, setReadOnlyEvent] = useState<CalendarEvent | null>(null);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [addBlockDate, setAddBlockDate] = useState("");
+  const [addBlockDurationMinutes, setAddBlockDurationMinutes] = useState(60);
+  const [addBlockError, setAddBlockError] = useState("");
+  const [addingBlock, setAddingBlock] = useState(false);
   const calendarRangeRef = useRef({
     start: startOfWeek(new Date(), { weekStartsOn: 0 }),
     end: endOfDay(addDays(startOfWeek(new Date(), { weekStartsOn: 0 }), 14)),
@@ -268,6 +284,8 @@ export default function CalendarPage() {
         ...EMPTY_FORM,
         startTime: toDatetimeLocalValue(slot.start),
         endTime: toDatetimeLocalValue(slot.end),
+        startTimeOnly: formatTimeValue(slot.start),
+        endTimeOnly: formatTimeValue(slot.end),
       });
     } else {
       const defaults = defaultEventTimes();
@@ -296,6 +314,10 @@ export default function CalendarPage() {
         return;
       }
       setForm(formFromAssignmentRow(row));
+      const addDefaults = resetAddBlockForm(new Date());
+      setAddBlockDate(addDefaults.date);
+      setAddBlockDurationMinutes(addDefaults.durationMinutes);
+      setAddBlockError(addDefaults.error);
       setShowForm(true);
       return;
     }
@@ -309,7 +331,45 @@ export default function CalendarPage() {
       return;
     }
     setForm(formFromRow(row));
+    if (row.type === "coursework" && row.assignmentId) {
+      const addDefaults = resetAddBlockForm(new Date(row.startTime));
+      setAddBlockDate(addDefaults.date);
+      setAddBlockDurationMinutes(addDefaults.durationMinutes);
+      setAddBlockError(addDefaults.error);
+    }
     setShowForm(true);
+  }
+
+  async function addStudyBlock() {
+    if (!form.scheduleEventId && !form.assignmentId) return;
+
+    setAddingBlock(true);
+    setAddBlockError("");
+
+    const res = await fetch("/api/schedule?action=add-coursework-block", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(form.scheduleEventId
+          ? { referenceEventId: form.scheduleEventId }
+          : { assignmentId: form.assignmentId }),
+        scheduleDate: addBlockDate,
+        durationMinutes: addBlockDurationMinutes,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setAddBlockError(data.error ?? "Failed to add study block");
+      setAddingBlock(false);
+      return;
+    }
+
+    setAddingBlock(false);
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    setAddBlockError("");
+    await loadEvents();
   }
 
   async function handleTemplatesSaved() {
@@ -327,7 +387,7 @@ export default function CalendarPage() {
     setSaving(true);
     setError("");
 
-    if (form.assignmentId && form.courseId) {
+    if (form.assignmentId && form.courseId && !form.scheduleEventId) {
       const dueDate = fromDatetimeLocalValue(form.startTime);
       if (Number.isNaN(dueDate.getTime())) {
         setError("Invalid due date");
@@ -371,7 +431,7 @@ export default function CalendarPage() {
             scheduleRows.find((row) => row.id === form.scheduleEventId)?.startTime ??
               new Date(),
           )
-        : new Date();
+        : fromDatetimeLocalValue(form.startTime);
       const applied = applyDailyTimes(baseDate, form.startTimeOnly, form.endTimeOnly);
       start = applied.startTime;
       end = applied.endTime;
@@ -426,7 +486,7 @@ export default function CalendarPage() {
   }
 
   async function deleteEvent() {
-    if (form.assignmentId && form.courseId) {
+    if (form.assignmentId && form.courseId && !form.scheduleEventId) {
       if (!confirm("Delete this assignment?")) return;
 
       setSaving(true);
@@ -466,7 +526,11 @@ export default function CalendarPage() {
     await loadEvents();
   }
 
-  const isAssignment = Boolean(form.assignmentId);
+  const isAssignment = Boolean(form.assignmentId && !form.scheduleEventId);
+  const canAddStudyBlock = Boolean(
+    form.assignmentId &&
+      (isAssignment || (form.scheduleEventId && form.type === "coursework")),
+  );
   const isEditing = Boolean(form.scheduleEventId || form.assignmentId);
   const isDailyBlock = !isAssignment && (form.recurring || isTemplateTitle(form.title));
 
@@ -665,7 +729,23 @@ export default function CalendarPage() {
                   <input
                     type="checkbox"
                     checked={form.recurring}
-                    onChange={(e) => setForm({ ...form, recurring: e.target.checked })}
+                    onChange={(e) => {
+                      const recurring = e.target.checked;
+                      if (recurring && form.startTime) {
+                        const start = fromDatetimeLocalValue(form.startTime);
+                        const end = form.endTime
+                          ? fromDatetimeLocalValue(form.endTime)
+                          : new Date(start.getTime() + 60 * 60 * 1000);
+                        setForm({
+                          ...form,
+                          recurring,
+                          startTimeOnly: formatTimeValue(start),
+                          endTimeOnly: formatTimeValue(end),
+                        });
+                        return;
+                      }
+                      setForm({ ...form, recurring });
+                    }}
                   />
                   Repeat daily
                 </label>
@@ -675,6 +755,52 @@ export default function CalendarPage() {
                 <p className="text-xs text-zinc-500">
                   Daily blocks repeat every day. End time can be the next morning (e.g. sleep 23:00 → 07:00).
                 </p>
+              )}
+
+              {canAddStudyBlock && (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 space-y-3">
+                  <p className="text-sm font-medium">Add study block</p>
+                  <p className="text-xs text-zinc-500">
+                    Pick a day before the due date. Manual blocks are not limited to the 3-day auto-schedule
+                    window. The first open slot is found by scanning forward on that day.
+                  </p>
+                  <label className="block text-xs text-zinc-600">
+                    Day
+                    <input
+                      type="date"
+                      value={addBlockDate}
+                      onChange={(e) => setAddBlockDate(e.target.value)}
+                      className="mt-1 w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                      required
+                    />
+                  </label>
+                  <label className="block text-xs text-zinc-600">
+                    Duration (minutes)
+                    <input
+                      type="number"
+                      min={15}
+                      max={480}
+                      step={15}
+                      value={addBlockDurationMinutes}
+                      onChange={(e) =>
+                        setAddBlockDurationMinutes(Number(e.target.value) || 60)
+                      }
+                      className="mt-1 w-full rounded border border-zinc-300 px-3 py-2 text-sm"
+                      required
+                    />
+                  </label>
+                  {addBlockError && (
+                    <p className="text-xs text-red-600">{addBlockError}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void addStudyBlock()}
+                    disabled={addingBlock || saving || !addBlockDate}
+                    className="w-full rounded border border-indigo-300 bg-white px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                  >
+                    {addingBlock ? "Adding..." : "Add block"}
+                  </button>
+                </div>
               )}
             </div>
             <div className="mt-4 flex justify-between gap-2">
