@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { endOfDay } from "date-fns";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { scheduleCourseworkBlocks } from "@/lib/schedule/coursework-scheduling";
+import { scheduleCourseworkBlocks, addManualCourseworkBlock } from "@/lib/schedule/coursework-scheduling";
 import { scheduleUserCalendar } from "@/lib/schedule/pipeline";
 import { z } from "zod";
 
@@ -258,6 +258,25 @@ export async function PATCH(req: NextRequest) {
   if (action === "schedule-coursework") {
     const scheduled = await scheduleCourseworkBlocks(session.user.id);
     return NextResponse.json({ ok: true, scheduledCount: scheduled.length });
+  }
+
+  if (action === "add-coursework-block") {
+    const bodySchema = z
+      .object({
+        referenceEventId: z.string().optional(),
+        assignmentId: z.string().optional(),
+        scheduleDate: z.string(),
+        durationMinutes: z.number().int().min(15).max(480),
+      })
+      .refine((body) => body.referenceEventId ?? body.assignmentId, {
+        message: "referenceEventId or assignmentId required",
+      });
+    const body = bodySchema.parse(await req.json());
+    const result = await addManualCourseworkBlock(session.user.id, body);
+    if ("error" in result) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+    return NextResponse.json(result.event, { status: result.status });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });
