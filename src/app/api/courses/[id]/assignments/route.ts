@@ -14,6 +14,7 @@ const updateAssignmentSchema = z.object({
   title: z.string().min(1).optional(),
   dueDate: z.string().nullable().optional(),
   points: z.number().nullable().optional(),
+  submitted: z.boolean().optional(),
 });
 
 export async function POST(
@@ -83,6 +84,7 @@ export async function PATCH(
         ? { dueDate: body.dueDate ? new Date(body.dueDate) : null }
         : {}),
       ...(body.points !== undefined ? { points: body.points } : {}),
+      ...(body.submitted !== undefined ? { submitted: body.submitted } : {}),
     },
   });
 
@@ -90,11 +92,21 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  if (body.submitted === true) {
+    await prisma.scheduleEvent.deleteMany({
+      where: {
+        userId: session.user.id,
+        assignmentId,
+        type: "coursework",
+      },
+    });
+  }
+
   const updated = await prisma.assignment.findFirst({
     where: { id: assignmentId, courseId },
   });
 
-  if (updated) {
+  if (updated && body.submitted !== true) {
     try {
       await scheduleCourseworkForAssignment(session.user.id, updated.id);
     } catch (scheduleError) {

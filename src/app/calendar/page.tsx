@@ -39,6 +39,8 @@ type ScheduleEventRow = {
   courseId?: string;
   assignmentId?: string;
   examId?: string;
+  submitted?: boolean;
+  color?: string;
   course?: { id?: string; color?: string; name?: string };
 };
 
@@ -61,10 +63,12 @@ type CourseLegendItem = {
   color: string;
 };
 
+const COMPLETED_ASSIGNMENT_COLOR = "#22c55e";
+
 const NON_COURSE_LEGEND: Record<string, string> = {
   sleep: "#312e81",
   meal: "#f59e0b",
-  workout: "#22c55e",
+  workout: "#166534",
   time_off: "#94a3b8",
 };
 
@@ -117,7 +121,10 @@ function expandEventsForRange(
     const endTime = new Date(row.endTime);
     const resource = {
       type: row.type,
-      color: row.course?.color,
+      color:
+        row.type === "assignment" && row.submitted
+          ? COMPLETED_ASSIGNMENT_COLOR
+          : (row.color ?? row.course?.color),
       courseName: row.course?.name,
       scheduleEventId: row.readOnly ? undefined : row.id,
       recurrenceRule: row.recurrenceRule,
@@ -125,6 +132,7 @@ function expandEventsForRange(
       courseId: row.courseId ?? row.course?.id,
       assignmentId: row.assignmentId,
       examId: row.examId,
+      submitted: row.submitted,
     };
 
     if (!row.recurrenceRule) {
@@ -340,6 +348,34 @@ export default function CalendarPage() {
     setShowForm(true);
   }
 
+  async function markAssignmentComplete() {
+    if (!form.assignmentId || !form.courseId) return;
+
+    setSaving(true);
+    setError("");
+
+    const res = await fetch(
+      `/api/courses/${form.courseId}/assignments?assignmentId=${form.assignmentId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ submitted: true }),
+      },
+    );
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(data.error ?? "Failed to mark assignment complete");
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setShowForm(false);
+    setForm(EMPTY_FORM);
+    await loadEvents();
+  }
+
   async function addStudyBlock() {
     if (!form.scheduleEventId && !form.assignmentId) return;
 
@@ -527,9 +563,16 @@ export default function CalendarPage() {
   }
 
   const isAssignment = Boolean(form.assignmentId && !form.scheduleEventId);
+  const isAssignmentSubmitted = form.assignmentId
+    ? scheduleRows.some((row) => row.assignmentId === form.assignmentId && row.submitted)
+    : false;
   const canAddStudyBlock = Boolean(
     form.assignmentId &&
+      !isAssignmentSubmitted &&
       (isAssignment || (form.scheduleEventId && form.type === "coursework")),
+  );
+  const canMarkComplete = Boolean(
+    form.assignmentId && form.courseId && !isAssignmentSubmitted,
   );
   const isEditing = Boolean(form.scheduleEventId || form.assignmentId);
   const isDailyBlock = !isAssignment && (form.recurring || isTemplateTitle(form.title));
@@ -804,18 +847,28 @@ export default function CalendarPage() {
               )}
             </div>
             <div className="mt-4 flex justify-between gap-2">
-              {isEditing ? (
-                <button
-                  type="button"
-                  onClick={deleteEvent}
-                  disabled={saving}
-                  className="rounded px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  Delete
-                </button>
-              ) : (
-                <span />
-              )}
+              <div className="flex gap-2">
+                {isEditing ? (
+                  <button
+                    type="button"
+                    onClick={deleteEvent}
+                    disabled={saving}
+                    className="rounded px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                ) : null}
+                {canMarkComplete && (
+                  <button
+                    type="button"
+                    onClick={() => void markAssignmentComplete()}
+                    disabled={saving}
+                    className="rounded px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : "Mark as complete"}
+                  </button>
+                )}
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
