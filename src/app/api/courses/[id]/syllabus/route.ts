@@ -27,7 +27,7 @@ export async function POST(
   }
 
   const body = reuploadSchema.parse(await req.json());
-  const parsed = parseSyllabusText(body.content, body.sourceType);
+  const parsed = await parseSyllabusText(body.content, body.sourceType);
 
   await prisma.syllabus.upsert({
     where: { courseId },

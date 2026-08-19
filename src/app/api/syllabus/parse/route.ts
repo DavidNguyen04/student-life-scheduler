@@ -6,6 +6,7 @@ import {
 } from "@/lib/syllabus/parser";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         );
       }
-      const parsed = parseSyllabusText(text, sourceType);
+      const parsed = await parseSyllabusText(text, sourceType);
 
       return NextResponse.json({
         ...parsed,
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Content required" }, { status: 400 });
     }
 
-    const parsed = parseSyllabusText(content, sourceType ?? "text");
+    const parsed = await parseSyllabusText(content, sourceType ?? "text");
     return NextResponse.json({ ...parsed, sourceType: sourceType ?? "text" });
   } catch (error) {
     console.error(error);
