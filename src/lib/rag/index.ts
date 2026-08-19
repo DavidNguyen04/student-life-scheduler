@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import { getOpenAI } from "@/lib/openai";
 import { prisma } from "@/lib/db";
 
 const CHUNK_SIZE = 800;
@@ -24,11 +24,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
     normB += b[i] * b[i];
   }
   return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-8);
-}
-
-function getOpenAI(): OpenAI | null {
-  if (!process.env.OPENAI_API_KEY) return null;
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
 export async function embedText(text: string): Promise<number[]> {

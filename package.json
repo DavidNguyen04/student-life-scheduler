@@ -16,7 +16,6 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/react-big-calendar": "^1.16.3",
     "bcryptjs": "^3.0.3",
-    "chrono-node": "^2.10.1",
     "date-fns": "^4.4.0",
     "dotenv": "^17.4.2",
     "mammoth": "^1.12.0",

@@ -4,7 +4,7 @@ A web app to schedule coursework, time off, workouts, sleep, and meals — with 
 
 ## Features
 
-- **Syllabus-first courses** — upload PDF or paste HTML/text; parser extracts assignments and exams
+- **Syllabus-first courses** — upload PDF or paste HTML/text; an LLM extracts assignments, exams, and lecture times for review before import
 - **Unified calendar** — sleep, meals, workouts, time off, coursework, and study suggestions
 - **Dashboard** — today's agenda, upcoming assignments/exams, priority focus list
 - **Canvas sync (Phase 2)** — connect with PAT to sync courses, assignments, and calendar events
@@ -33,7 +33,7 @@ Open [http://localhost:3000](http://localhost:3000), register an account, and ad
 | `AUTH_SECRET` | NextAuth secret (generate with `openssl rand -hex 32`) |
 | `NEXTAUTH_URL` | App URL (e.g. `http://localhost:3000`) |
 | `ENCRYPTION_KEY` | 64-char hex key for Canvas token encryption |
-| `OPENAI_API_KEY` | Optional — enables full chatbot responses and embeddings |
+| `OPENAI_API_KEY` | Required — syllabus parsing, chatbot responses, and embeddings |
 
 ## Scripts
 
